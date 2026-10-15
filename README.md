@@ -6,7 +6,7 @@ through [DisplayXR](https://github.com/DisplayXR/displayxr-unity). Without a 3D 
 It uses 4DV.ai's own Unity plugin unchanged, so it is also the reference for judging 4DV.ai's rendering quality
 against other splat players.
 
-Demo page: https://joehillthunder.github.io/displayxr-demos/apps/4dv/
+Demo page: https://joehillthunder.github.io/displayxr-4dv/ (one of the rooms in [DisplayXR HQ](https://joehillthunder.github.io/))
 
 ## Run it
 

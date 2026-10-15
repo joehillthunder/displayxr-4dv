@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>4D Volumetric Viewer · DisplayXR</title>
+<meta name="description" content="4DV: 4DV.ai volumetric video played in glasses-free 3D on Leia displays through DisplayXR.">
+<style>
+  :root {
+    --bg: #05080f; --panel: #0c1220; --line: #1f2a3d; --text: #eef2f8; --muted: #9aa6b8;
+    --accent: #20e6e9; --accent-ink: #001417;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f6f8fb; --panel: #ffffff; --line: #dbe2ec; --text: #0d1420; --muted: #526072;
+      --accent: #007f86; --accent-ink: #ffffff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 880px; margin: 0 auto; padding: 40px 16px 64px; }
+  a { color: var(--accent); }
+  .crumb { font-size: 14px; color: var(--muted); }
+  h1 { font-size: clamp(30px, 6vw, 46px); line-height: 1.1; margin: 12px 0 8px; letter-spacing: -0.02em; }
+  h1 small { display: block; font-size: 0.42em; font-weight: 600; color: var(--accent); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px; }
+  .lede { font-size: 19px; color: var(--muted); max-width: 640px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 24px 0 8px; }
+  .btn { display: inline-block; padding: 12px 18px; border-radius: 8px; font-weight: 700; text-decoration: none;
+         border: 1px solid var(--accent); }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); }
+  .note { font-size: 14px; color: var(--muted); }
+  section { margin-top: 40px; }
+  h2 { font-size: 20px; margin: 0 0 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
+  ol, ul { padding-left: 22px; margin: 0; }
+  li + li { margin-top: 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  kbd { font: 13px ui-monospace, Consolas, monospace; border: 1px solid var(--line); border-bottom-width: 2px;
+        border-radius: 4px; padding: 1px 6px; background: var(--panel); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  footer { margin-top: 48px; font-size: 14px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <p class="crumb"><a href="../">DisplayXR HQ</a> / Spatial UI/UX / 4DV</p>
+
+  <h1><small>Spatial UI/UX</small>4D Volumetric Viewer</h1>
+  <p class="lede">Volumetric video from <a href="https://www.4dv.ai/">4DV.ai</a>, played in glasses-free 3D on a
+    Leia display. People and scenes are captured as moving 3D Gaussian splats, so you can lean in and look
+    around them while they play.</p>
+
+  <div class="actions">
+    <a class="btn primary" href="https://github.com/joehillthunder/displayxr-4dv/releases/latest">Download for Windows</a>
+    <a class="btn" href="https://github.com/joehillthunder/displayxr-4dv">Source on GitHub</a>
+  </div>
+  <p class="note">Unlike most DisplayXR HQ demos, this one is a Windows app, not a web page: 4DV.ai's player ships as a
+    Unity plugin. Without a 3D display it still runs, in 2D in a normal window.</p>
+
+  <section>
+    <h2>Run it</h2>
+    <div class="card">
+      <ol>
+        <li>Install DisplayXR with the <a href="https://github.com/DisplayXR/displayxr-installer/releases/latest">DisplayXR installer</a>
+          (runtime, Shell and Leia SR plug-in).</li>
+        <li>Download <b>4DV-Viewer-Win64.zip</b> from the latest release (1.9 GB: the app and 8 clips) and unzip
+          it anywhere. For more clips, also download <b>Clips-Pack2</b> (badminton, Neemo, Unitree robot, wedding)
+          and <b>Clips-Pack3</b> (horse, corridor interview) and unzip them into the same folder.</li>
+        <li>Run <b>4DV Viewer.exe</b>. It opens in a window and weaves 3D inside it; the clip plays and loops.
+          Drag to walk around the performer.</li>
+      </ol>
+    </div>
+  </section>
+
+  <section>
+    <h2>Controls</h2>
+    <p>The sidebar lists every clip and has play/pause, previous/next, a seekable progress bar, loop mode, speed,
+      3D on/off, turntable, reset view and a <b>3D strength</b> slider. Clips with a soundtrack play it in sync.</p>
+    <div class="card">
+      <table>
+        <tr><th>Input</th><th>Action</th></tr>
+        <tr><td>Left-drag</td><td>Orbit around the performer</td></tr>
+        <tr><td>Right-drag</td><td>Pan</td></tr>
+        <tr><td>Mouse wheel</td><td>Zoom</td></tr>
+        <tr><td><kbd>T</kbd></td><td>Auto-turn (turntable)</td></tr>
+        <tr><td><kbd>Home</kbd></td><td>Reset view</td></tr>
+        <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>Less / more 3D depth</td></tr>
+        <tr><td><kbd>V</kbd></td><td>Switch the display between 2D and 3D</td></tr>
+        <tr><td><kbd>F11</kbd></td><td>Fullscreen / window</td></tr>
+        <tr><td><kbd>Space</kbd></td><td>Pause / play</td></tr>
+        <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Previous / next clip</td></tr>
+        <tr><td><kbd>L</kbd></td><td>Loop mode: loop clip, play all, play once</td></tr>
+        <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>Playback speed (¼× to 2×)</td></tr>
+        <tr><td><kbd>R</kbd></td><td>Restart clip</td></tr>
+        <tr><td><kbd>H</kbd></td><td>Hide / show the sidebar</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Quit</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>What it's for</h2>
+    <div class="grid">
+      <div class="card"><b>Demo</b><br>Show volumetric video at events: a performer or a talking head
+        you can walk around, without a headset.</div>
+      <div class="card"><b>Quality check</b><br>4DV.ai says its own plugin renders better than other players.
+        This app uses that plugin unchanged, so it's the reference to compare against the DisplayXR
+        splat viewer.</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>More clips</h2>
+    <div class="card">
+      <p style="margin-top:0">The release includes a selection from 4DV.ai's sample library: dance, sport,
+        interviews, a horse, a cat, a robot and more. The library has more than 20 clips; others can be converted
+        with one command, as the <a href="https://github.com/joehillthunder/displayxr-4dv#adding-clips">README</a>
+        explains.</p>
+    </div>
+  </section>
+
+  <footer>
+    Volumetric clips and the 4D Gaussian Splatting plugin are © 4DV.ai, used with permission. Stereo rendering by
+    <a href="https://github.com/DisplayXR/displayxr-unity">DisplayXR for Unity</a>.
+  </footer>
+</main>
+</body>
+</html>
