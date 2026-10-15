@@ -1,0 +1,20 @@
+{
+  "dependencies": {
+    "com.4dv.4d-gaussian-splatting": "file:com.4dv.4d-gaussian-splatting",
+    "com.displayxr.unity": "https://github.com/DisplayXR/displayxr-unity.git#upm/v2.26.0",
+    "com.unity.burst": "1.8.21",
+    "com.unity.inputsystem": "1.11.2",
+    "com.unity.mathematics": "1.2.6",
+    "com.unity.render-pipelines.core": "14.0.12",
+    "com.unity.render-pipelines.universal": "14.0.12",
+    "com.unity.xr.management": "4.5.0",
+    "com.unity.xr.openxr": "1.13.2",
+    "com.unity.modules.audio": "1.0.0",
+    "com.unity.modules.imgui": "1.0.0",
+    "com.unity.modules.jsonserialize": "1.0.0",
+    "com.unity.modules.ui": "1.0.0",
+    "com.unity.modules.unitywebrequest": "1.0.0",
+    "com.unity.modules.vr": "1.0.0",
+    "com.unity.modules.xr": "1.0.0"
+  }
+}

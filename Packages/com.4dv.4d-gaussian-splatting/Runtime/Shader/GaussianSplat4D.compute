@@ -1,0 +1,475 @@
+#define GROUP_SIZE 256
+#define TILE_SIZE 16
+
+#pragma kernel CSCalculateSplatting
+#pragma kernel CSInitOrder
+#pragma kernel CSCalcDispatchParams
+#pragma kernel CSHandleStereoInstance
+#pragma kernel CSSplitPassPrep
+#pragma kernel CSSplitPassAdvance
+#pragma kernel CSSetupSplatDataPool
+#pragma kernel CSCalculatePooledSplats
+#pragma kernel CSTileGSRenderer
+#pragma kernel CSSortChecker
+
+#pragma multi_compile _ UNITY_STEREO_INSTANCING_ENABLED
+#pragma multi_compile_local _ SH_0 SH_1 SH_2 SH_3
+#pragma multi_compile_local _ IS_COMPRESSED
+
+// // For stereo instancing support
+// #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+ByteAddressBuffer _CurrentVertexDataBuffer;
+ByteAddressBuffer _CurrentChunkDataBuffer;
+ByteAddressBuffer _CurrentSHDataBuffer;
+
+
+#include "GaussianSplat4D.hlsl"
+#include "UnityCG.cginc"
+
+float4x4 _MatrixObjectToWorld;
+float4x4 _MatrixWorldToObject;
+float4x4 _MatrixV;
+float4x4 _MatrixInvV;
+float4 _VecWorldSpaceCameraPos;
+float3 _VecScale;
+float _CurrentTime;
+float _CurrentProgressTime;
+float _SplatSize;
+float _CutoffSigma;
+float _Transparency;
+int _UseSPMI;
+int _SplitCount;
+int _SplatPerBatch;
+int _SHOrder;
+
+// uint _SplatCount;
+
+// StructuredBuffer<SplatData> _CurrentSplatDataBuffer;
+StructuredBuffer<float4x4> _SplatSourceW2O;
+RWStructuredBuffer<SplatData> _SplatDataBuffer;
+float _CurrentTimeScale;
+int _GroupSourceOffset;
+int _CurrentSplatCount;
+int _CurrentPoolOffset;
+int _CurrentFrameSplatCount;
+int _CurrentSplatSourceIndex;
+int _CurrentSplatSourceDensityLOD;
+
+float _SplatOpacityThreshold;
+float _SplatCullTanThreshold;
+
+RWStructuredBuffer<PooledSplatData> _SplatDataPool;
+RWStructuredBuffer<int> _SplatSourceIDBuffer;
+// RWStructuredBuffer<SplatViewData> _SplatViewDataBuffer;
+RWByteAddressBuffer _SplatPositionSigma;        // half4
+RWByteAddressBuffer _SplatPackedAxis;           // half4
+RWByteAddressBuffer _SplatPackedColor;          // uint
+
+RWStructuredBuffer<uint> _CounterBuffer;
+RWStructuredBuffer<uint> _OrderBuffer;
+RWStructuredBuffer<float> _DistanceBuffer;
+RWStructuredBuffer<int> _ParamBuffer;
+RWStructuredBuffer<uint> _SortCheckerBuffer;
+
+float3 IntToColorHash(uint i)
+{
+    uint state = i * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    uint result = (word >> 22u) ^ word;
+    
+    // Normalize to 0..1 range for RGB
+    float r = float(result * 1u) * (1.0 / 4294967295.0);
+    float g = float(result * 123u) * (1.0 / 4294967295.0); // Shift for G
+    float b = float(result * 456u) * (1.0 / 4294967295.0); // Shift for B
+    
+    return float3(r, g, b);
+}
+
+uint PackColor(float4 color)
+{
+    color = saturate(color);
+    
+    uint r = (uint)(color.r * 255.0 + 0.5);
+    uint g = (uint)(color.g * 255.0 + 0.5);
+    uint b = (uint)(color.b * 255.0 + 0.5);
+    uint a = (uint)(color.a * 255.0 + 0.5);
+    
+    // Layout: 0xAABBGGRR
+    return r | (g << 8) | (b << 16) | (a << 24);
+}
+
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void CSCalculateSplatting (uint3 id : SV_DispatchThreadID)
+{
+    // uint idx = id.x;
+    // if (idx >= _SplatCount) return;
+
+    // SplatData splat = _SplatDataBuffer[idx];
+    // SplatViewData view = (SplatViewData)0;
+
+    // float3 pos = splat.pos;
+    // float3 motion = splat.motion;
+    // float3 newPos = pos + motion * (_CurrentTime - splat.t);
+    // float4 centerWorldPos = mul(_MatrixObjectToWorld, float4(newPos.x, newPos.y, newPos.z, 1.0f));
+    // float4 centerViewPos = mul(_MatrixV, centerWorldPos);
+
+    // // hard-coded near clip plane
+    // bool splatCulled = centerViewPos.z >= 0.01;
+    // // Cull the splat if it is outside of 120 degree H/V FOV, tan(60 deg) = sqrt(3) = 1.732
+    // // If we need to run this on pimax or other HMD with huge FOV, change the clamping FOV below
+    // splatCulled = splatCulled || (abs(centerViewPos.x / centerViewPos.z) > 1.732);
+    // splatCulled = splatCulled || (abs(centerViewPos.y / centerViewPos.z) > 1.732);
+
+    // float opacity = splat.opacity * _Transparency;
+    // float ratio = exp(-0.5 * pow((_CurrentTime - splat.t), 2) / (splat.t_scale * splat.t_scale));
+    // if(ratio > 0.05f && opacity > 0.005f)
+    // {
+    //     if (!splatCulled)
+    //     {   
+    //         float4 boxRot = splat.rot;
+    //         float3 boxSize = splat.scale * _VecScale * _VecScale;
+
+    //         float3x3 splatRotScaleMat = CalcMatrixFromRotationScale(boxRot, boxSize);
+    //         splatRotScaleMat = mul(splatRotScaleMat, (float3x3)_MatrixWorldToObject);
+
+    //         float3 cov3d0, cov3d1;
+    //         CalcCovariance3D(splatRotScaleMat, cov3d0, cov3d1);
+
+    //         float3 worldViewDir = _VecWorldSpaceCameraPos.xyz - centerWorldPos;
+    //         float3 objViewDir = mul((float3x3)_MatrixWorldToObject, worldViewDir);
+    //         objViewDir = normalize(objViewDir);
+
+    //         // Since training was done in sRGB, blending will also be required to be in sRGB, not linear.
+    //         SplatSHData sh = {splat.fdc, splat.sh1, splat.sh2, splat.sh3, splat.sh4, splat.sh5, splat.sh6, 
+    //                         splat.sh7, splat.sh8, splat.sh9, splat.shA, splat.shB, splat.shC, splat.shD, 
+    //                         splat.shE, splat.shF};
+    //         view.color.rgb = saturate(ShadeSH(sh, objViewDir));
+    //         // view.color.rgb = splat.fdc;
+
+    //         view.color.a = saturate(opacity * ratio);
+
+    //         // We splat in view space, since Unity can't really access the correct projection matrix 
+    //         // on different platform(VisionPro, Quest3, etc) in compute shader.
+    //         float3 view_forward = normalize(centerViewPos.xyz);
+    //         float3 view_right = normalize(cross(float3(0.0, 1.0, 0.0), view_forward));
+    //         float3 view_up = normalize(cross(view_forward, view_right));
+
+    //         float3 e1 = view_right;
+    //         float3 e2 = view_up;
+    //         float3 e3 = view_forward;
+
+    //         float3x3 B = float3x3(e1, e2, e3);
+            
+    //         float3x3 VLocalRot = mul(B, (float3x3)_MatrixV);
+
+    //         float3x3 cov_w = float3x3(
+    //             cov3d0.x, cov3d0.y, cov3d0.z,
+    //             cov3d0.y, cov3d1.x, cov3d1.y,
+    //             cov3d0.z, cov3d1.y, cov3d1.z
+    //         );
+
+    //         float3x3 sigma_local = mul( mul(VLocalRot, cov_w), transpose(VLocalRot));
+
+    //         float3 cov2DView = float3(sigma_local._m00, sigma_local._m01, sigma_local._m11);
+
+    //         float2 axis1, axis2;
+    //         float angle;
+    //         DecomposeCovariance(cov2DView, _SplatSize, axis1, axis2, angle);
+
+    //         view.axis1 = mul((float3x3)_MatrixInvV, view_up * axis1.y + view_right * axis1.x);
+    //         view.axis2 = mul((float3x3)_MatrixInvV, view_up * axis2.y + view_right * axis2.x);
+
+    //         view.position = centerWorldPos;
+    //         uint writeIndex = 0;
+    //         InterlockedAdd(_CounterBuffer[0], 1, writeIndex);
+
+    //         _DistanceBuffer[writeIndex] = centerViewPos.z;
+
+    //         _SplatViewDataBuffer[writeIndex] = view;
+    //     }
+        
+    // }
+    
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void CSInitOrder(uint3 id : SV_DispatchThreadID)
+{
+    uint idx = id.x;
+    if (idx >= (uint)_CounterBuffer[0]) return;
+
+    _OrderBuffer[idx] = idx;
+}
+
+[numthreads(1, 1, 1)]
+void CSCalcDispatchParams(uint3 id : SV_DispatchThreadID)
+{
+    // _CounterBuffer[0] = 16384;
+    uint count = _CounterBuffer[0];
+    _ParamBuffer[1] = count;
+    _ParamBuffer[4] = (count + 3840 - 1) / 3840; 
+    _ParamBuffer[7] = count;
+    _ParamBuffer[11] = count;
+}
+
+[numthreads(1, 1, 1)]
+void CSHandleStereoInstance(uint3 id : SV_DispatchThreadID)
+{
+    uint instanceCount = _CounterBuffer[0];
+    _ParamBuffer[1] = instanceCount << 1;
+}
+
+[numthreads(1, 1, 1)]
+void CSSplitPassPrep(uint3 id : SV_DispatchThreadID)
+{
+    uint instanceCount = _ParamBuffer[1];
+    uint splatCount = instanceCount;
+    if( _UseSPMI != 0 )
+    {
+        splatCount = splatCount >> 1;
+    }
+    uint splatPerSplit = (splatCount + _SplitCount - 1) / _SplitCount;
+    uint instancePerSplit = (splatPerSplit + _SplatPerBatch - 1) / _SplatPerBatch;
+    if( _UseSPMI != 0 )
+    {
+        instancePerSplit = instancePerSplit << 1;
+    }
+
+    _ParamBuffer[0] = 6 * _SplatPerBatch;
+    
+    _ParamBuffer[1] = instancePerSplit;
+    _ParamBuffer[3] = 0;
+    _ParamBuffer[10] = splatPerSplit;
+}
+
+[numthreads(1, 1, 1)]
+void CSSplitPassAdvance(uint3 id : SV_DispatchThreadID)
+{
+    uint splatPerSplit = _ParamBuffer[10];
+    _ParamBuffer[3] += splatPerSplit;
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void CSSetupSplatDataPool (uint3 id : SV_DispatchThreadID)
+{
+    uint idx = id.x;
+    if (idx >= _CurrentSplatCount) return;
+    // unzip here
+
+    SplatData splat = (SplatData)0;
+    #if defined(IS_COMPRESSED)
+    UnpackChunk(idx << _CurrentSplatSourceDensityLOD, splat);
+    UnpackSH(idx << _CurrentSplatSourceDensityLOD, _SHOrder, splat);
+    #else
+    splatSet(idx << _CurrentSplatSourceDensityLOD, _SHOrder, splat);
+    #endif
+
+    PooledSplatSetupInfo setupInfo;
+    setupInfo.matO2W = _MatrixObjectToWorld;
+    setupInfo.matW2O = _MatrixWorldToObject;
+    setupInfo.matV = _MatrixV;
+    setupInfo.matInvV = _MatrixInvV;
+    setupInfo.camPosWorld = _VecWorldSpaceCameraPos;
+    setupInfo.color = float4(1.0, 1.0, 1.0, 1.0);
+    setupInfo.tintColor = float4(1.0, 1.0, 1.0, 1.0);
+    setupInfo.objScale = _VecScale;
+    setupInfo.transparency = _Transparency;
+    setupInfo.currentTime = _CurrentTime;
+    setupInfo.splatSize = _SplatSize;
+    setupInfo.cutoffSigma = _CutoffSigma;
+    setupInfo.tScale = _CurrentTimeScale;
+    setupInfo.splatColorPower = 1.0;
+    setupInfo.localPosition = splat.pos;
+
+    PooledSplatData pooledSplat = SetupPooledSplat(splat, setupInfo);
+
+    _SplatDataPool[_CurrentPoolOffset + idx] = pooledSplat;
+    _SplatSourceIDBuffer[_CurrentPoolOffset + idx] = _CurrentSplatSourceIndex;
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void CSCalculatePooledSplats (uint3 id : SV_DispatchThreadID)
+{
+    uint idx = id.x;
+    if (idx >= _CurrentFrameSplatCount) return;
+
+    PooledSplatData splat = _SplatDataPool[idx];
+    int srcIdx = _SplatSourceIDBuffer[idx];
+    // SplatViewData view = (SplatViewData)0;
+    float4 centerViewPos = mul(_MatrixV, float4(splat.pos, 1.0));
+
+    // hard-coded near clip plane
+    bool splatCulled = centerViewPos.z >= 0.01;
+    // Cull the splat if it is outside of 120 degree H/V FOV, tan(60 deg) = sqrt(3) = 1.732
+    // If we need to run this on pimax or other HMD with huge FOV, change the clamping FOV below
+    splatCulled = splatCulled || (abs(centerViewPos.x / centerViewPos.z) > 1.732);
+    splatCulled = splatCulled || (abs(centerViewPos.y / centerViewPos.z) > 1.732);
+
+    splatCulled = splatCulled || (splat.color.a < _SplatOpacityThreshold);
+    
+    if (!splatCulled)
+    {   
+        float4 boxRot = splat.rot;
+        float3 boxSize = splat.scale;
+
+        float3x3 splatRotScaleMat = CalcMatrixFromRotationScale(boxRot, boxSize);
+        splatRotScaleMat = mul(splatRotScaleMat, (float3x3)_SplatSourceW2O[srcIdx + _GroupSourceOffset]);
+
+        float3 cov3d0, cov3d1;
+        CalcCovariance3D(splatRotScaleMat, cov3d0, cov3d1);
+
+        // view.color = splat.color;
+
+        // We splat in view space, since Unity can't really access the correct projection matrix 
+        // on different platform(VisionPro, Quest3, etc) in compute shader.
+        float3 view_forward = normalize(centerViewPos.xyz);
+        float3 view_right = normalize(cross(float3(0.0, 1.0, 0.0), view_forward));
+        float3 view_up = normalize(cross(view_forward, view_right));
+
+        float3 e1 = view_right;
+        float3 e2 = view_up;
+        float3 e3 = view_forward;
+
+        float3x3 B = float3x3(e1, e2, e3);
+            
+        float3x3 VLocalRot = mul(B, (float3x3)_MatrixV);
+
+        float3x3 cov_w = float3x3(
+            cov3d0.x, cov3d0.y, cov3d0.z,
+            cov3d0.y, cov3d1.x, cov3d1.y,
+            cov3d0.z, cov3d1.y, cov3d1.z
+        );
+
+        float3x3 sigma_local = mul( mul(VLocalRot, cov_w), transpose(VLocalRot));
+
+        float3 cov2DView = float3(sigma_local._m00, sigma_local._m01, sigma_local._m11);
+        float splatDist = length(centerViewPos.xyz);
+
+        // -------------------------------------------------------------------
+        // 1. FAST CULLING CHECK (Before altering the covariance)
+        // -------------------------------------------------------------------
+        // The major axis length squared is the largest eigenvalue of the 2x2 covariance matrix.
+        float trace = cov2DView.x + cov2DView.z;
+        float det = cov2DView.x * cov2DView.z - cov2DView.y * cov2DView.y;
+        float diff = cov2DView.x - cov2DView.z;
+        
+        // Calculate max variance to find the true view-space extent
+        float maxVariance = 0.5 * (trace + sqrt(max(0.0, diff * diff + 4.0 * cov2DView.y * cov2DView.y)));
+        float originalLenAxis1 = sqrt(max(0.0, maxVariance));
+        float splatDiameter = originalLenAxis1 * 2.0;
+
+        // Keep your original culling logic here
+        if( splatDiameter < splatDist * _SplatCullTanThreshold )
+        {
+            return;
+        }
+
+        // -------------------------------------------------------------------
+        // 2. LOW-PASS FILTER (The OG "minimum pixel size" logic)
+        // -------------------------------------------------------------------
+        // You need to pass in a new uniform for the tangent of a ~0.3 to 1.0 pixel size.
+        // e.g., float _SplatMinPixelTan = (2.0 * tan(FOV / 2.0)) / ScreenHeight * 0.3;
+        float minSizeViewSpace = splatDist * 0.0006f; 
+        float minVariance = minSizeViewSpace * minSizeViewSpace;
+        
+        // Add the minimum variance to the diagonal (inflate the splat)
+        cov2DView.x += minVariance;
+        cov2DView.z += minVariance;
+
+        // -------------------------------------------------------------------
+        // 3. OPACITY COMPENSATION (Energy Conservation)
+        // -------------------------------------------------------------------
+        // Because we artificially made the splat larger, we must make it more transparent
+        // Area is proportional to the square root of the determinant.
+        float originalArea = sqrt(max(0.0, det));
+        float newDet = cov2DView.x * cov2DView.z - cov2DView.y * cov2DView.y;
+        float newArea = sqrt(max(1e-8, newDet));
+        
+        // Scale alpha down by how much the area increased
+        float alphaMultiplier = originalArea / newArea;
+        // splat.color.a *= alphaMultiplier;
+
+        float2 axis1, axis2;
+        float angle;
+        float opacityCompensatedSigma = (0.75f + splat.color.a * (0.5f - 0.25f * splat.color.a)) * splat.cutoffSigma;
+        DecomposeCovariance(cov2DView, opacityCompensatedSigma, axis1, axis2, angle);
+        
+        float lenAxis1 = length(axis1);
+        // float splatDiameter = lenAxis1 * 2.0;
+        // if( splatDiameter < splatDist * _SplatCullTanThreshold )
+        // {
+        //     return;
+        // }
+        float lenAxis2 = length(axis2);
+
+        // view.axis1 = half3(mul((float3x3)_MatrixInvV, view_up * axis1.y + view_right * axis1.x) * splat.splatSize);
+        // view.axis2 = half3(mul((float3x3)_MatrixInvV, view_up * axis2.y + view_right * axis2.x) * splat.splatSize);
+        half3 viewSpaceAxis1 = half3(mul((float3x3)_MatrixInvV, view_up * axis1.y + view_right * axis1.x) * splat.splatSize);
+
+        // view.cutoffSigma = opacityCompensatedSigma;
+
+        // view.position = half4(splat.pos, 1.0);
+        
+        uint writeIndex = 0;
+        InterlockedAdd(_CounterBuffer[0], 1, writeIndex);
+
+        _DistanceBuffer[writeIndex] = -splatDist;
+        _OrderBuffer[writeIndex] = writeIndex;
+        // _SplatViewDataBuffer[writeIndex] = view;
+        uint float4Address = writeIndex * 16;
+        uint half4Address = writeIndex * 8;
+        uint uintAddress = writeIndex * 4;
+
+        float4 posSig = float4(splat.pos, opacityCompensatedSigma);
+        // uint posSigLow = f32tof16(posSig.x) | f32tof16(posSig.y) << 16;
+        // uint posSigHigh = f32tof16(posSig.z) | f32tof16(posSig.w) << 16;
+        uint4 uintPosSig = asuint(posSig);
+        _SplatPositionSigma.Store4(float4Address, uintPosSig);
+        
+        half4 packedAxis = half4(viewSpaceAxis1.xyz, lenAxis2 / lenAxis1);
+        uint packedAxisLow = f32tof16(packedAxis.x) | f32tof16(packedAxis.y) << 16;
+        uint packedAxisHigh = f32tof16(packedAxis.z) | f32tof16(packedAxis.w) << 16;
+        _SplatPackedAxis.Store2(half4Address, uint2(packedAxisLow, packedAxisHigh));
+        
+        uint packedColor = PackColor(splat.color);
+        _SplatPackedColor.Store(uintAddress, packedColor);
+
+    }
+
+}
+
+[numthreads(TILE_SIZE, TILE_SIZE, 1)]
+void CSTileGSRenderer(uint3 groupID : SV_GroupID, uint3 dispatchID : SV_DispatchThreadID)
+{
+
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void CSSortChecker(uint3 id : SV_DispatchThreadID)
+{
+    uint idx = id.x;
+    if (idx >= _CounterBuffer[0]) return;
+    if (idx == 0)
+    {
+        _SortCheckerBuffer[0] = _CounterBuffer[0];
+        _SortCheckerBuffer[1] = 0;
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    if (idx != 0)
+    {
+        float prevSplatDist = _DistanceBuffer[idx - 1];
+        float currentSplatDist = _DistanceBuffer[idx];
+        if (prevSplatDist < currentSplatDist)
+        {
+            uint writeIndex = 0;
+            InterlockedAdd(_SortCheckerBuffer[1], 1, writeIndex);
+            if( writeIndex < 1024 )
+            {
+                _SortCheckerBuffer[writeIndex + 2] = idx;
+            }
+        }
+    }
+}

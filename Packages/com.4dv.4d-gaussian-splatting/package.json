@@ -1,0 +1,26 @@
+{
+  "name": "com.4dv.4d-gaussian-splatting",
+  "version": "1.0.1",
+  "displayName": "4D GaussianSplatting",
+  "description": "",
+  "unity": "2022.3",
+  "dependencies": {
+      "com.unity.render-pipelines.universal": "14.0.12",
+      "com.unity.render-pipelines.core": "14.0.12",
+      "com.unity.burst": "1.8.21",
+      "com.unity.mathematics": "1.2.6",
+      "com.unity.modules.unitywebrequest": "1.0.0",
+      "com.unity.modules.xr": "1.0.0"
+    },
+  "author": {
+    "name": "4DV.ai",
+    "email": "contact@4dv.ai"
+  },
+  "samples": [
+      {
+          "displayName": "Demo Setup",
+          "description": "A sample scene with resources",
+          "path": "Samples~"
+      }
+  ]
+}

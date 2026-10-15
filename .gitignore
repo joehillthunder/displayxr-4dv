@@ -1,0 +1,18 @@
+# Unity
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+*.csproj
+*.sln
+.vs/
+
+# Converted clip data is large; it ships in the release zip, not in git.
+/Assets/StreamingAssets/GaussianAssets/
+/Assets/StreamingAssets/GaussianAssets.meta
+
+# 4DV sample package (45 MB); the same dance clip ships in the release zip
+/Packages/com.4dv.4d-gaussian-splatting/Samples~/
