@@ -1,0 +1,3 @@
+GaussianAssets/dance_sample.c/dance_sample.c_0_chunk.bytes
+GaussianAssets/dance_sample.c/dance_sample.c_0_sh.bytes
+GaussianAssets/dance_sample.c/dance_sample.c_0_vertex.bytes

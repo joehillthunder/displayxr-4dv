@@ -45,9 +45,35 @@ public static class FourDVSetup
             target = BuildTarget.StandaloneWindows64,
             options = BuildOptions.None,
         });
+        if (report.summary.result == UnityEditor.Build.Reporting.BuildResult.Succeeded)
+            DeployDisplayXRManifest(report.summary.outputPath);
         Debug.Log($"[4DV] Build {report.summary.result}: {report.summary.outputPath}");
         if (Application.isBatchMode && report.summary.result != UnityEditor.Build.Reporting.BuildResult.Succeeded)
             EditorApplication.Exit(1);
+    }
+
+    // Without <Data>/UnitySubsystems/DisplayXR/UnitySubsystemsManifest.json the DisplayXR display provider never
+    // loads and the app runs as plain 2D. The package's own post-build deploy didn't produce it in this project
+    // (git-URL install), so copy it from wherever the package actually resolved.
+    static void DeployDisplayXRManifest(string exePath)
+    {
+        var pkg = UnityEditor.PackageManager.PackageInfo.FindForAssetPath("Packages/com.displayxr.unity");
+        if (pkg == null) throw new Exception("com.displayxr.unity not found");
+        var dataDir = Path.Combine(Path.GetDirectoryName(exePath), Path.GetFileNameWithoutExtension(exePath) + "_Data");
+        var copies = new[]
+        {
+            (Path.Combine(pkg.resolvedPath, "Runtime", "UnitySubsystemsManifest.json"),
+             Path.Combine(dataDir, "UnitySubsystems", "DisplayXR", "UnitySubsystemsManifest.json")),
+            (Path.Combine(pkg.resolvedPath, "Runtime", "Plugins", "Windows", "x64", "displayxr_unity.dll"),
+             Path.Combine(dataDir, "Plugins", "x86_64", "displayxr_unity.dll")),
+        };
+        foreach (var (src, dst) in copies)
+        {
+            if (File.Exists(dst) && new FileInfo(dst).Length == new FileInfo(src).Length) continue;
+            Directory.CreateDirectory(Path.GetDirectoryName(dst));
+            File.Copy(src, dst, true);
+            Debug.Log($"[4DV] Deployed {Path.GetFileName(dst)}");
+        }
     }
 
     static void SetupRenderPipeline()
@@ -81,6 +107,27 @@ public static class FourDVSetup
             map.GetArrayElementAtIndex(map.arraySize - 1).longValue = localId;
             so.ApplyModifiedProperties();
             EditorUtility.SetDirty(renderer);
+        }
+
+        // A feature made with CreateInstance has empty shader slots (4DV's sample sets them by hand in the
+        // inspector), and Create() then throws in the GPU sort. Point each slot at the plugin's shader.
+        const string kShaderDir = "Packages/com.4dv.4d-gaussian-splatting/Runtime/Shader/";
+        foreach (var f in renderer.rendererFeatures.Where(f => f != null && f.GetType() == featureType))
+        {
+            var fso = new SerializedObject(f);
+            void Slot(string field, string file)
+            {
+                var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(kShaderDir + file);
+                if (asset == null) throw new Exception($"4DV shader {file} not found");
+                fso.FindProperty(field).objectReferenceValue = asset;
+            }
+            Slot("GS4DShader", "GaussianSplat4D.shader");
+            Slot("CompositeShader", "DepthAwareComposite.shader");
+            Slot("splatComputeShader", "GaussianSplat4D.compute");
+            Slot("dvr", "DeviceRadixSort.compute");          // the _pico variant is for Pico headsets
+            Slot("GSDepthStencil", "GSDepthStencil.shader");
+            fso.ApplyModifiedProperties();
+            EditorUtility.SetDirty(f);
         }
 
         var pipeline = AssetDatabase.LoadAssetAtPath<UniversalRenderPipelineAsset>(kPipelinePath);
@@ -132,8 +179,16 @@ public static class FourDVSetup
     {
         PlayerSettings.productName = kProductName;
         PlayerSettings.companyName = "DisplayXR Demos";
-        PlayerSettings.fullScreenMode = FullScreenMode.FullScreenWindow;
+        // Windowed weaving: DisplayXR weaves into the app's window wherever it sits; F11 toggles fullscreen.
+        PlayerSettings.fullScreenMode = FullScreenMode.Windowed;
+        PlayerSettings.defaultScreenWidth = 1600;
+        PlayerSettings.defaultScreenHeight = 900;
+        PlayerSettings.resizableWindow = true;
         PlayerSettings.runInBackground = true;
+
+        // 4DV's GPU radix sort needs SM 6.0 wave intrinsics (DXC), which D3D11 lacks. DisplayXR supports URP on D3D12.
+        PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.StandaloneWindows64, false);
+        PlayerSettings.SetGraphicsAPIs(BuildTarget.StandaloneWindows64, new[] { GraphicsDeviceType.Direct3D12 });
 
         // Input handling: Both (the DisplayXR plugin uses the Input System package).
         var ps = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/ProjectSettings.asset").FirstOrDefault();
@@ -150,16 +205,28 @@ public static class FourDVSetup
         Directory.CreateDirectory("Assets/Scenes");
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
+        // Display-centric rig. The camera must be a child: in XR, Unity overwrites the camera's local pose
+        // with the tracked eye pose every frame, so a root-level camera ends up at the origin, inside the clip.
+        var pivot = new GameObject("Orbit Pivot");
+        // 4DV captures put the performer at the origin facing -Z, inside a ~3.5 m ring of camera stands;
+        // this default view sits inside the ring so no stands block it.
+        pivot.transform.position = new Vector3(0f, 0.95f, 0f);
+        var displayGo = new GameObject("Virtual Display");
+        displayGo.transform.SetParent(pivot.transform, false);
+        var display = displayGo.AddComponent<DisplayXR.DisplayXRDisplay>();
+
         var camGo = new GameObject("Main Camera") { tag = "MainCamera" };
-        camGo.transform.position = new Vector3(0f, 1f, -2f);
+        camGo.transform.SetParent(displayGo.transform, false);
         var cam = camGo.AddComponent<Camera>();
         cam.clearFlags = CameraClearFlags.SolidColor;
         cam.backgroundColor = new Color(0.02f, 0.03f, 0.05f);
         cam.nearClipPlane = 0.05f;
         cam.farClipPlane = 1000f;
-        cam.fieldOfView = 60f;
         camGo.AddComponent<UniversalAdditionalCameraData>();
-        AddComponentByName(camGo, "DisplayXR.DisplayXRCamera");
+
+        var orbit = pivot.AddComponent<FourDVOrbit>();
+        orbit.display = display;
+        orbit.fallbackCamera = cam;
 
         var managerGo = new GameObject("GSManager");
         AddComponentByName(managerGo, "GaussianSplat4D.Runtime.GaussianSplat4DManager");

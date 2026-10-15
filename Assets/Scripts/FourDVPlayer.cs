@@ -8,7 +8,7 @@ using UnityEngine.InputSystem;
 //   Left / Right previous / next clip
 //   Up / Down    playback speed
 //   R            restart clip
-//   Esc          quit
+// View controls live in FourDVOrbit.
 public class FourDVPlayer : MonoBehaviour
 {
     public GaussianSplat4DSource[] clips;
@@ -34,7 +34,6 @@ public class FourDVPlayer : MonoBehaviour
             if (kb.upArrowKey.wasPressedThisFrame) playbackSpeed = Mathf.Min(playbackSpeed * 2f, 4f);
             if (kb.downArrowKey.wasPressedThisFrame) playbackSpeed = Mathf.Max(playbackSpeed * 0.5f, 0.125f);
             if (kb.rKey.wasPressedThisFrame) m_time = 0f;
-            if (kb.escapeKey.wasPressedThisFrame) Application.Quit();
         }
 
         if (clips == null || clips.Length == 0) return;
