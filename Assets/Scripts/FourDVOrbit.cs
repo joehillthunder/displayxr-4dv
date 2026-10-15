@@ -1,16 +1,17 @@
 using System;
 using DisplayXR;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 
 // Turntable controls for a display-centric DisplayXR rig:
 //
 //   Orbit Pivot (this, at the subject's centre)   yaw/pitch = orbit, position = pan
-//     Virtual Display (DisplayXRDisplay)           its plane passes through the pivot
-//       Main Camera                                 placed for the 2D fallback; XR overwrites its pose
+//     Main Camera (Camera + DisplayXRDisplay)      3D: on the pivot (display plane through the subject)
+//                                                  2D: backed off along -Z to frame the same height
 //
 // Mouse:  left-drag orbit · right/middle-drag pan · wheel zoom
-// Keys:   T auto-turn · Home reset view · [ ] depth · V 2D/3D · F11 fullscreen · I screenshot · Esc quit
+// Keys:   T auto-turn · Home reset view · [ ] 3D strength · V 2D/3D · F11 fullscreen · I screenshot · Esc quit
 //
 // With the DisplayXR provider running, the woven image is shown in a separate window that Unity's Input
 // System doesn't get clicks from, so buttons come from the provider's window (displayxr_get_overlay_pointer)
@@ -30,12 +31,19 @@ public class FourDVOrbit : MonoBehaviour
     public float zoomStep = 0.12f;          // fraction per wheel notch
     public float autoTurnSpeed = 12f;       // degrees per second
 
-    Vector3 m_HomePos;
-    float m_HomeHeight, m_Yaw, m_Pitch, m_Depth = 1f;
-    bool m_AutoTurn, m_3D = true;
-    int m_ButtonsPrev, m_ButtonsCurr;
+    public const float MaxStrength = 2f;
+    public float Strength { get; set; } = 1f;   // DisplayXRDisplay.ipdFactor: 0 = flat, 1 = natural, 2 = exaggerated
+    public bool Is3D { get; private set; } = true;
+    public bool AutoTurn { get; set; }
 
-    void Start()
+    Vector3 m_DefaultPos, m_HomePos;
+    float m_DefaultHeight, m_DefaultYaw, m_DefaultPitch;
+    float m_HomeHeight, m_HomeYaw, m_HomePitch;
+    float m_Yaw, m_Pitch;
+    int m_ButtonsCurr;
+    bool m_Dragging;
+
+    void Awake()
     {
         // Windowed weaving: open at 70% of the display rather than a fixed pixel size, which is tiny on
         // high-DPI 3D panels. F11 switches to fullscreen.
@@ -45,67 +53,107 @@ public class FourDVOrbit : MonoBehaviour
             Screen.SetResolution(Mathf.RoundToInt(res.width * 0.7f), Mathf.RoundToInt(res.height * 0.7f), FullScreenMode.Windowed);
         }
 
-        // Overrides for framing a new clip without rebuilding:
+        // Overrides for framing a clip without rebuilding:
         //   -4dv-pivot x y z   -4dv-yaw deg   -4dv-pitch deg   -4dv-height metres
-        var args = Environment.GetCommandLineArgs();
-        float Arg(string name, int offset, float fallback)
-        {
-            int i = Array.IndexOf(args, name);
-            return i >= 0 && i + offset < args.Length &&
-                   float.TryParse(args[i + offset], System.Globalization.NumberStyles.Float,
-                       System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : fallback;
-        }
         var p = transform.position;
-        transform.position = new Vector3(Arg("-4dv-pivot", 1, p.x), Arg("-4dv-pivot", 2, p.y), Arg("-4dv-pivot", 3, p.z));
-        m_Yaw = Arg("-4dv-yaw", 1, transform.eulerAngles.y);
-        m_Pitch = Arg("-4dv-pitch", 1, 0f);
-        displayHeight = Arg("-4dv-height", 1, displayHeight);
-
-        m_HomePos = transform.position;
-        m_HomeHeight = displayHeight;
-        m_HomeYaw = m_Yaw;
-        m_HomePitch = m_Pitch;
-        Apply();
+        m_DefaultPos = new Vector3(Arg("-4dv-pivot", 1, p.x), Arg("-4dv-pivot", 2, p.y), Arg("-4dv-pivot", 3, p.z));
+        m_DefaultYaw = Arg("-4dv-yaw", 1, transform.eulerAngles.y);
+        m_DefaultPitch = Arg("-4dv-pitch", 1, 0f);
+        m_DefaultHeight = Arg("-4dv-height", 1, displayHeight);
+        UseDefaultHome();
         ScheduleScreenshotFromArgs();
     }
+
+    static float Arg(string name, int offset, float fallback)
+    {
+        var args = Environment.GetCommandLineArgs();
+        int i = Array.IndexOf(args, name);
+        return i >= 0 && i + offset < args.Length &&
+               float.TryParse(args[i + offset], System.Globalization.NumberStyles.Float,
+                   System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : fallback;
+    }
+
+    // ---- home view (set per clip by FourDVPlayer) ----
+
+    public void UseDefaultHome() => SetHome(m_DefaultPos, m_DefaultYaw, m_DefaultPitch, m_DefaultHeight);
+
+    // From a clip's suggested camera: orbit around its target, facing from its position, framing what its
+    // field of view showed at that distance.
+    public void SetHomeFromCamera(Vector3 camPos, Vector3 target, float fovDeg)
+    {
+        var dir = target - camPos;
+        float dist = dir.magnitude;
+        if (dist < 0.01f) { UseDefaultHome(); return; }
+        float yaw = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
+        float pitch = -Mathf.Asin(Mathf.Clamp(dir.y / dist, -1f, 1f)) * Mathf.Rad2Deg;
+        float height = 2f * dist * Mathf.Tan(Mathf.Clamp(fovDeg, 10f, 120f) * 0.5f * Mathf.Deg2Rad);
+        SetHome(target, yaw, Mathf.Clamp(pitch, -80f, 80f), Mathf.Clamp(height, minHeight, maxHeight));
+    }
+
+    public void SetHome(Vector3 pos, float yaw, float pitch, float height)
+    {
+        m_HomePos = pos; m_HomeYaw = yaw; m_HomePitch = pitch; m_HomeHeight = height;
+        ResetView();
+    }
+
+    public void ResetView()
+    {
+        transform.position = m_HomePos;
+        m_Yaw = m_HomeYaw;
+        m_Pitch = m_HomePitch;
+        displayHeight = m_HomeHeight;
+        Apply();
+    }
+
+    // ---- 3D controls (keyboard and FourDVPanel) ----
+
+    public void Toggle3D() => Set3D(!Is3D);
+
+    public void Set3D(bool on)
+    {
+        Is3D = on;
+        if (ProviderActive()) DisplayXRProvider.RequestDisplayMode(on);
+    }
+
+    public void StepStrength(float delta) => Strength = Mathf.Clamp(Strength + delta, 0f, MaxStrength);
 
     void Update()
     {
         var kb = Keyboard.current;
         PollButtons();
+        bool overUi = PointerOverUi();
 
-        // orbit / pan
+        // orbit / pan: a drag that starts over the panel belongs to the panel
+        if (m_ButtonsCurr == 0) m_Dragging = false;
+        else if (!m_Dragging && !overUi) m_Dragging = true;
+
         Vector2 d = Mouse.current != null ? Mouse.current.delta.ReadValue() : Vector2.zero;
-        if (Held(0))
+        if (m_Dragging && Held(0))
         {
             m_Yaw += d.x * orbitSpeed;
             m_Pitch = Mathf.Clamp(m_Pitch - d.y * orbitSpeed, -80f, 80f);
-            m_AutoTurn = false;
+            AutoTurn = false;
         }
-        else if (Held(1) || Held(2))
+        else if (m_Dragging && (Held(1) || Held(2)))
         {
             float perPixel = displayHeight / Mathf.Max(Screen.height, 1);
             transform.position += transform.rotation * new Vector3(-d.x, -d.y, 0f) * perPixel;
         }
-        if (m_AutoTurn) m_Yaw += autoTurnSpeed * Time.deltaTime;
+        if (AutoTurn) m_Yaw += autoTurnSpeed * Time.deltaTime;
 
         // zoom
-        float wheel = Mouse.current != null ? Mouse.current.scroll.ReadValue().y : 0f;
+        float wheel = Mouse.current != null && !overUi ? Mouse.current.scroll.ReadValue().y : 0f;
         if (Mathf.Abs(wheel) >= 10f) wheel /= 120f;   // player reports WHEEL_DELTA units
         if (Mathf.Abs(wheel) > 0.001f)
             displayHeight = Mathf.Clamp(displayHeight * Mathf.Pow(1f - zoomStep, wheel), minHeight, maxHeight);
 
         if (kb != null)
         {
-            if (kb.tKey.wasPressedThisFrame) m_AutoTurn = !m_AutoTurn;
+            if (kb.tKey.wasPressedThisFrame) AutoTurn = !AutoTurn;
             if (kb.homeKey.wasPressedThisFrame) ResetView();
-            if (kb.leftBracketKey.wasPressedThisFrame) m_Depth = Mathf.Max(0f, m_Depth - 0.25f);
-            if (kb.rightBracketKey.wasPressedThisFrame) m_Depth = Mathf.Min(2f, m_Depth + 0.25f);
-            if (kb.vKey.wasPressedThisFrame && ProviderActive())
-            {
-                m_3D = !m_3D;
-                DisplayXRProvider.RequestDisplayMode(m_3D);
-            }
+            if (kb.leftBracketKey.wasPressedThisFrame) StepStrength(-0.25f);
+            if (kb.rightBracketKey.wasPressedThisFrame) StepStrength(+0.25f);
+            if (kb.vKey.wasPressedThisFrame) Toggle3D();
             if (kb.f11Key.wasPressedThisFrame)
             {
                 bool full = Screen.fullScreenMode != FullScreenMode.Windowed;
@@ -120,45 +168,55 @@ public class FourDVOrbit : MonoBehaviour
         catch (DllNotFoundException) { }
 
         Apply();
+
+        if (s_Debug && Time.frameCount % 120 == 0 && fallbackCamera != null)
+        {
+            var c = fallbackCamera.transform;
+            Debug.Log($"[4DV-DBG] pivot {transform.position} yaw {m_Yaw:0} pitch {m_Pitch:0} h {displayHeight:0.00} " +
+                      $"display {display?.transform.position} cam {c.position} local {c.localPosition} fov {fallbackCamera.fieldOfView:0.0} " +
+                      $"btn {m_ButtonsCurr} drag {m_Dragging} overUi {PointerOverUi()}");
+        }
     }
 
-    float m_HomeYaw, m_HomePitch;
-
-    void ResetView()
-    {
-        m_Yaw = m_HomeYaw;
-        m_Pitch = m_HomePitch;
-        m_Depth = 1f;
-        displayHeight = m_HomeHeight;
-        transform.position = m_HomePos;
-        m_AutoTurn = false;
-    }
+    static readonly bool s_Debug = Array.IndexOf(Environment.GetCommandLineArgs(), "-4dv-debug") >= 0;
 
     void Apply()
     {
         transform.rotation = Quaternion.Euler(m_Pitch, m_Yaw, 0f);
-        if (display != null)
+        if (display == null) return;
+        display.virtualDisplayHeight = displayHeight;
+        display.ipdFactor = Strength;
+
+        // The camera and DisplayXRDisplay share one GameObject (DisplayXR's supported layout).
+        // 3D: that object sits on the pivot, so the virtual display plane passes through the performer.
+        // 2D (no DisplayXR runtime): back it away so a plain camera frames the same displayHeight. DisplayXR
+        // does this once at startup; redoing it every frame keeps zoom working.
+        var t = display.transform;
+        t.localRotation = Quaternion.identity;
+        if (ProviderActive() || fallbackCamera == null)
         {
-            display.virtualDisplayHeight = displayHeight;
-            display.ipdFactor = m_Depth;
+            t.localPosition = Vector3.zero;
+            return;
         }
-        if (fallbackCamera != null)
-        {
-            // 2D: frame the same displayHeight from a fixed distance ratio
-            fallbackCamera.transform.localPosition = new Vector3(0f, 0f, -displayHeight * viewDistanceRatio);
-            fallbackCamera.transform.localRotation = Quaternion.identity;
-            fallbackCamera.fieldOfView = 2f * Mathf.Atan(0.5f / viewDistanceRatio) * Mathf.Rad2Deg;
-        }
+        fallbackCamera.fieldOfView = 2f * Mathf.Atan(0.5f / viewDistanceRatio) * Mathf.Rad2Deg;
+        t.localPosition = display.TryGetVirtualDisplayPullback(fallbackCamera, out float d, out _)
+            ? new Vector3(0f, 0f, -d) : Vector3.zero;
     }
 
-    static bool ProviderActive()
+    public static bool ProviderActive()
     {
         try { return DisplayXRProviderDriver.IsActive; } catch { return false; }
     }
 
+    static bool PointerOverUi()
+    {
+        if (DisplayXRWindowSpaceUI.IsCursorOverInteractive) return true;   // set by FourDVPanel in 3D
+        var es = EventSystem.current;
+        return es != null && es.IsPointerOverGameObject();                 // 2D fallback canvas
+    }
+
     void PollButtons()
     {
-        m_ButtonsPrev = m_ButtonsCurr;
         int b = 0;
         if (ProviderActive())
         {
@@ -177,7 +235,7 @@ public class FourDVOrbit : MonoBehaviour
 
     bool Held(int button) => (m_ButtonsCurr & (1 << button)) != 0;
 
-    // Test hook: `"4DV Viewer.exe" -4dv-shot C:\path\shot.png` saves one frame after 8 s, then quits.
+    // Test hook: `"4DV Viewer.exe" -4dv-shot C:\path\shot.png [-4dv-clip N]` saves one frame after 8 s, then quits.
     void ScheduleScreenshotFromArgs()
     {
         var args = Environment.GetCommandLineArgs();
@@ -188,6 +246,13 @@ public class FourDVOrbit : MonoBehaviour
 
     System.Collections.IEnumerator Shot(string path)
     {
+        int clip = (int)Arg("-4dv-clip", 1, -1);
+        if (clip >= 0)
+        {
+            yield return null;
+            var player = FindAnyObjectByType<FourDVPlayer>();
+            if (player != null) player.Select(clip);
+        }
         yield return new WaitForSeconds(8f);
         yield return new WaitForEndOfFrame();
         ScreenCapture.CaptureScreenshot(path);

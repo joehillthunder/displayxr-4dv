@@ -1,0 +1,9 @@
+{
+  "note": "Hand-tuned home views. Used instead of a clip's own view.json (4DV's suggested camera) where that one frames badly. pivot = point to orbit (Unity metres), yaw/pitch in degrees, height = metres of scene shown top to bottom. Find values with: \"4DV Viewer.exe\" -4dv-clip N -4dv-pivot x y z -4dv-yaw deg -4dv-pitch deg -4dv-height m",
+  "views": [
+    { "clip": "dance_sample.c",     "pivot": [0, 0.95, 0],  "yaw": 0,   "pitch": 0, "height": 2.0 },
+    { "clip": "Kat_Miche_10s_150w", "pivot": [0, 0.9, 0],   "yaw": 180, "pitch": 0, "height": 3.0 },
+    { "clip": "TimTalk_iPhone17",   "pivot": [0, 1.3, 0],   "yaw": -45, "pitch": 0, "height": 3.5 },
+    { "clip": "unitree",            "pivot": [-0.4, 0.9, 0], "yaw": 0,  "pitch": 0, "height": 2.2 }
+  ]
+}

@@ -1,0 +1,55 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: -1902455608, guid: 7ae855367e1b748a9842d7344c908c64, type: 3}
+  m_Name: dance2
+  m_EditorClassIdentifier: 
+  fileCount: 15
+  maxSplatCount: 1173456
+  maxChunkCount: 4584
+  totalDuration: 73.2
+  timeOptions:
+  - 0
+  - 5
+  - 5
+  - 5
+  - 10
+  - 5
+  - 15
+  - 5
+  - 20
+  - 5
+  - 25
+  - 5
+  - 30
+  - 5
+  - 35
+  - 5
+  - 40
+  - 5
+  - 45
+  - 5
+  - 50
+  - 5
+  - 55
+  - 5
+  - 60
+  - 5
+  - 65
+  - 5
+  - 70
+  - 3.2
+  byteFolderPath: Assets/StreamingAssets/GaussianAssets/dance2
+  fileName: dance2
+  isCompressed: 1
+  shOrder: 0
+  chunkCount: 160d000002110000e81100003c1000004a0f00009a0f0000390f0000c50f00006710000018100000d10f00003c0f0000fc0e0000780f0000ea0a0000
+  vertexCount: f9150d00e4011100d0e711008c3b10007a490f0033990f0059380f00d9c40f00e1661000e0171000a8d00f00783b0f00fffb0e0061770f001de90a00

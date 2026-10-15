@@ -1,0 +1,29 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: -1902455608, guid: 7ae855367e1b748a9842d7344c908c64, type: 3}
+  m_Name: Kat_Miche_10s_150w
+  m_EditorClassIdentifier: 
+  fileCount: 2
+  maxSplatCount: 1549008
+  maxChunkCount: 6051
+  totalDuration: 10.333
+  timeOptions:
+  - 0
+  - 5
+  - 5
+  - 5.333
+  byteFolderPath: Assets/StreamingAssets/GaussianAssets/Kat_Miche_10s_150w
+  fileName: Kat_Miche_10s_150w
+  isCompressed: 1
+  shOrder: 2
+  chunkCount: a317000036150000
+  vertexCount: d0a217000f351500

@@ -1,0 +1,35 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: -1902455608, guid: 7ae855367e1b748a9842d7344c908c64, type: 3}
+  m_Name: wedding_25s
+  m_EditorClassIdentifier: 
+  fileCount: 5
+  maxSplatCount: 2963168
+  maxChunkCount: 11575
+  totalDuration: 24.5667
+  timeOptions:
+  - 0
+  - 5
+  - 5
+  - 5
+  - 10
+  - 5
+  - 15
+  - 5
+  - 20
+  - 4.5667
+  byteFolderPath: Assets/StreamingAssets/GaussianAssets/wedding_25s
+  fileName: wedding_25s
+  isCompressed: 1
+  shOrder: 2
+  chunkCount: cf1d0000372d000066270000992a0000a8250000
+  vertexCount: b0ce1d00e0362d00d7652700da982a0020a72500

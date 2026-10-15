@@ -211,18 +211,17 @@ public static class FourDVSetup
         // 4DV captures put the performer at the origin facing -Z, inside a ~3.5 m ring of camera stands;
         // this default view sits inside the ring so no stands block it.
         pivot.transform.position = new Vector3(0f, 0.95f, 0f);
-        var displayGo = new GameObject("Virtual Display");
-        displayGo.transform.SetParent(pivot.transform, false);
-        var display = displayGo.AddComponent<DisplayXR.DisplayXRDisplay>();
-
+        // Camera and DisplayXRDisplay on one object, as in DisplayXR's samples: its 2D fallback and
+        // per-camera hooks look for the Camera on the display's own GameObject.
         var camGo = new GameObject("Main Camera") { tag = "MainCamera" };
-        camGo.transform.SetParent(displayGo.transform, false);
+        camGo.transform.SetParent(pivot.transform, false);
         var cam = camGo.AddComponent<Camera>();
         cam.clearFlags = CameraClearFlags.SolidColor;
         cam.backgroundColor = new Color(0.02f, 0.03f, 0.05f);
         cam.nearClipPlane = 0.05f;
         cam.farClipPlane = 1000f;
         camGo.AddComponent<UniversalAdditionalCameraData>();
+        var display = camGo.AddComponent<DisplayXR.DisplayXRDisplay>();
 
         var orbit = pivot.AddComponent<FourDVOrbit>();
         orbit.display = display;
@@ -233,6 +232,11 @@ public static class FourDVSetup
 
         var playerGo = new GameObject("4DV Clips");
         var player = playerGo.AddComponent<FourDVPlayer>();
+        player.orbit = orbit;
+
+        var panel = new GameObject("4DV Panel Host").AddComponent<FourDVPanel>();
+        panel.player = player;
+        panel.orbit = orbit;
 
         var sourceType = FindType("GaussianSplat4D.Runtime.GaussianSplat4DSource");
         var assetType = FindType("GaussianSplat4D.Runtime.GaussianSplat4DAsset");
