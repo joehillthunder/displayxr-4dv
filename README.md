@@ -15,7 +15,16 @@ Demo page: https://joehillthunder.github.io/displayxr-4dv/ (one of the rooms in 
 
 It opens in a window (70% of the screen) and weaves 3D inside it; F11 goes fullscreen. The sidebar lists the
 clips and has play/pause, previous/next, a seekable progress bar, loop mode, speed, 3D on/off, turntable, reset
-view and a **3D strength** slider (0 = flat, 1 = natural, 2 = exaggerated). Clips with a soundtrack play it in sync.
+view and a **3D strength** slider. Clips with a soundtrack play it in sync.
+
+**Depth budget.** Past about 1% of the screen width, disparity on a lenticular panel shows as double edges
+(crosstalk). For each clip and view, the app measures how far the content in view sits in front of and behind
+the screen (5th and 95th percentile, from the clip's chunk bounds). It then scales the stereo down until that
+fits, the same rule as the web player, but never below 25% of natural depth. Close-ups (Cat, Dance, Tim Talk)
+keep full depth. Scenes that surround the performer (Badminton, Horse Walk, Rocket, Lang Lang) drop to 25–45%.
+3D strength multiplies on top: 1 = the fitted depth, 2 = double it, 0 = flat. The sidebar shows the fit,
+e.g. `1.00x · fit 25%`. Anything more than 20 cm in front of the screen is clipped. Those splats are strays
+around the capture rig, at the viewer's eye position.
 
 | Input | Action |
 |---|---|
@@ -40,7 +49,39 @@ Larger releases come as several zips (GitHub's 2 GB per-file limit). Unzip the e
 folder as `4DV Viewer.exe`; clips whose data isn't there are simply left out of the list.
 
 To frame a new clip without rebuilding: `"4DV Viewer.exe" -4dv-pivot 0 0.95 0 -4dv-yaw 0 -4dv-height 2`
-(pivot = point to orbit, height = metres of scene shown top to bottom).
+(pivot = point to orbit, height = metres of scene shown top to bottom). To keep a framing, add the clip to
+`4DV Viewer_Data/StreamingAssets/4dv-views.json`. It uses the same format as `Assets/Resources/4dv-views.json`
+and wins over it.
+
+| Command line | Effect |
+|---|---|
+| `-screen-fullscreen 1 -window-mode borderless` | Unity's own: open fullscreen |
+| `-4dv-kiosk` | Open with the sidebar hidden (H shows it) |
+| `-4dv-clip N` | Open on clip N (0-based, name order) |
+| `-4dv-popout m` | Near clip, in metres in front of the screen (default 0.2) |
+| `-4dv-size-cut x` | Drop splats narrower than x × their distance (default 0.00015, half a pixel; 4DV's own 0.001) |
+| `-4dv-opacity-cut x` | Drop splats fainter than x (default 0.01; 4DV's own 0.04) |
+| `-4dv-debug` | Log the view, the content's extent and the depth fit to `Player.log` |
+| `-4dv-shot path.png` | Save one frame after 8 s and quit (blank in 3D: the woven image isn't Unity's) |
+
+The desktop shortcut on the demo PC runs `-screen-fullscreen 1 -window-mode borderless -4dv-kiosk`.
+
+**Rendering fixes on top of 4DV's plugin.** None of these edit the plugin:
+
+- **Content in front of the screen.** The plugin culls and sorts splats from `camera.worldToCameraMatrix`
+  and drops anything behind that camera. In a display-centric DisplayXR rig, the Camera object sits on the
+  screen plane, through the performer, so the near half of every clip was missing. Kat Miche showed only an
+  arm. The app now points that matrix from the viewer's position. XR rendering keeps its own per-eye matrices.
+- **Small splats.** 4DV's size cut (0.001 of distance) suits a wide headset. On this panel's narrow view it
+  removed everything under about 3.4 px. It's now half a pixel.
+- **Splat pool.** The pool held 4.19M splats a frame. Badminton, Corridor, Horse Walk, Neemo and Unitree have
+  4.8–6.5M, so the pool now grows to fit the largest clip (8.4M, 512 MB of VRAM).
+- **Cat framing.** Cat opens side-on and close, instead of 4DV's far, high camera.
+
+At launch the screen goes: the Unity splash, then DisplayXR's "XR for Unity" logo, then the clip. While the app's
+DisplayXR session has no eye tracking, a soft ring with a rotating highlight shows over the whole screen.
+It isn't drawn by this app. `Player.log` logs `[4DV] Eye tracking ON/OFF` and samples the eye positions every
+5 s, so tracking can be checked from a normal launch.
 
 ## Build it
 
