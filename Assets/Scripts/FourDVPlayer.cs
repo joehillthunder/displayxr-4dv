@@ -103,10 +103,14 @@ public class FourDVPlayer : MonoBehaviour
                         var size = t?.GetField("splatPoolSize", all);
                         if (t?.Name != "GaussianSplat4DFeature" || size == null) continue;
                         int current = (int)size.GetValue(feat);
-                        if (current >= pool) continue;
-                        Debug.Log($"[4DV] Splat pool {current:N0} -> {pool:N0} (largest clip {need:N0} splats)");
+                        // 16-bit blending target: thousands of faint splats stack per pixel, and 8 bits band them.
+                        var hdr = t.GetField("overrideNativeFramebufferFormat", all);
+                        bool wantHdr = ArgFloat("-4dv-hdr", 1f) > 0f;
+                        if (current >= pool && (hdr == null || (bool)hdr.GetValue(feat) == wantHdr)) continue;
+                        Debug.Log($"[4DV] Splat pool {current:N0} -> {pool:N0} (largest clip {need:N0} splats), 16-bit blend {wantHdr}");
                         t.GetMethod("ReleaseRuntimeResources", all, null, System.Type.EmptyTypes, null)?.Invoke(feat, null);
-                        size.SetValue(feat, pool);
+                        size.SetValue(feat, Mathf.Max(current, pool));
+                        hdr?.SetValue(feat, wantHdr);
                         feat.Create();
                     }
 

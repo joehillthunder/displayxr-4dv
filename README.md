@@ -61,6 +61,8 @@ and wins over it.
 | `-4dv-popout m` | Near clip, in metres in front of the screen (default 0.2) |
 | `-4dv-size-cut x` | Drop splats narrower than x × their distance (default 0.00015, half a pixel; 4DV's own 0.001) |
 | `-4dv-opacity-cut x` | Drop splats fainter than x (default 0.01; 4DV's own 0.04) |
+| `-4dv-splat-view f` | Sharpness: where the plugin measures splat blur from, as a fraction of the viewing distance (default 0.5; 1 = 4DV's own, softer; 0.4 = crisper) |
+| `-4dv-hdr 0` | Blend splats in 8 bits instead of 16 |
 | `-4dv-debug` | Log the view, the content's extent and the depth fit to `Player.log` |
 | `-4dv-shot path.png` | Save one frame after 8 s and quit (blank in 3D: the woven image isn't Unity's) |
 
@@ -76,6 +78,12 @@ The desktop shortcut on the demo PC runs `-screen-fullscreen 1 -window-mode bord
   removed everything under about 3.4 px. It's now half a pixel.
 - **Splat pool.** The pool held 4.19M splats a frame. Badminton, Corridor, Horse Walk, Neemo and Unitree have
   4.8–6.5M, so the pool now grows to fit the largest clip (8.4M, 512 MB of VRAM).
+- **Blur floor.** The plugin blurs every splat to at least 0.0006 × its distance, about 2 px here, and the
+  value is compiled into its shader. The distance is now measured from half the viewing distance, which
+  roughly halves that floor. Fur, braids and fabric weave are visibly sharper, at no GPU cost. Splats blend
+  in 16 bits.
+- **Resolution is fixed.** DisplayXR offers one 3D mode on this panel, 2 views of 1920×1200, and ignores
+  Unity's eye-texture scale. At 60 fps the heaviest clip uses about 40% of the RTX 5070 Ti.
 - **Cat framing.** Cat opens side-on and close, instead of 4DV's far, high camera.
 
 At launch the screen goes: the Unity splash, then DisplayXR's "XR for Unity" logo, then the clip. While the app's
