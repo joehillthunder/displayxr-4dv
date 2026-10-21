@@ -94,6 +94,9 @@ public class FourDVOrbit : MonoBehaviour
     {
         if (UnityEngine.Time.unscaledTime < m_NextEyeLog || !ProviderActive()) return;
         m_NextEyeLog = UnityEngine.Time.unscaledTime + 5f;
+        if (s_Debug)
+            foreach (var mi in DisplayXRProvider.Modes)
+                Debug.Log($"[4DV-DBG] mode {mi.modeIndex} '{mi.name}' views {mi.viewCount} tiles {mi.tileColumns}x{mi.tileRows} view {mi.viewWidthPx}x{mi.viewHeightPx} scale {mi.viewScaleX}x{mi.viewScaleY} hw3D {mi.hardwareDisplay3D} active {mi.isActive} requestable {mi.isRequestable}");
         bool got = DisplayXRProvider.TryGetViewerEyes(out var l, out var r);
         Debug.Log($"[4DV] Eyes tracked={DisplayXRProvider.IsEyeTracked} got={got} L={l.ToString("F3")} R={r.ToString("F3")}");
     }
@@ -216,6 +219,13 @@ public class FourDVOrbit : MonoBehaviour
     // from the nominal viewer instead (viewer metres in front of the panel, 0.1 m above its centre). XR
     // rendering keeps its own per-eye matrices and DisplayXR places the display from the transform, so only
     // the plugin's culling and sorting move.
+    //
+    // The plugin's compute shader also blurs every splat to at least 0.0006 x its distance from this point
+    // (about 2 px on this panel, sized for headsets). The final image comes from the real per-eye
+    // projection, so measuring from a point nearer the screen shrinks that floor: `-4dv-splat-view f` puts it
+    // at f x the viewing distance (default 0.5, about 1 px; 1 = the viewer, 4DV's own blur).
+    static readonly float s_SplatViewDistance = Mathf.Clamp(Arg("-4dv-splat-view", 1, 0.5f), 0.3f, 1f);
+
     void ApplySplatViewpoint(Camera cam, bool stereo)
     {
         if (cam == null) return;
@@ -223,7 +233,7 @@ public class FourDVOrbit : MonoBehaviour
         PanelGeometry(out _, out _, out float physH, out float viewer);
         float scenePerMetre = Mathf.Max(displayHeight, 1e-3f) / physH;
         var t = cam.transform;
-        Vector3 eye = t.position - t.forward * (viewer * scenePerMetre) + t.up * (0.1f * scenePerMetre);
+        Vector3 eye = t.position - t.forward * (viewer * s_SplatViewDistance * scenePerMetre) + t.up * (0.1f * scenePerMetre);
         cam.worldToCameraMatrix = Matrix4x4.Scale(new Vector3(1f, 1f, -1f)) *
                                   Matrix4x4.TRS(eye, t.rotation, Vector3.one).inverse;
     }
