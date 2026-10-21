@@ -34,7 +34,8 @@ public class FourDVPanel : MonoBehaviour
     Canvas m_Canvas;
     DisplayXRWindowSpaceUI m_Wsui;
     GraphicRaycaster m_Raycaster;
-    bool m_Visible = true;
+    // `-4dv-kiosk` opens with the sidebar hidden (H still shows it).
+    bool m_Visible = System.Array.IndexOf(System.Environment.GetCommandLineArgs(), "-4dv-kiosk") < 0;
 
     readonly List<(Button button, Text label)> m_ClipRows = new List<(Button, Text)>();
     Text m_Now, m_TimeText, m_PlayLabel, m_LoopLabel, m_SpeedLabel, m_3DLabel, m_StrengthValue;
@@ -139,7 +140,7 @@ public class FourDVPanel : MonoBehaviour
         Height(hint.gameObject, 150);
 
         PlaceFor2D();
-        m_CanvasGO.SetActive(true);
+        m_CanvasGO.SetActive(m_Visible);
     }
 
     // ---------------------------------------------------------------- per frame
@@ -190,7 +191,7 @@ public class FourDVPanel : MonoBehaviour
         m_SpeedLabel.text = $"Speed {player.playbackSpeed:0.##}x";
         m_3DLabel.text = orbit.Is3D ? "3D: on" : "3D: off";
         if (!Mathf.Approximately(m_Strength.value, orbit.Strength)) m_Strength.SetValueWithoutNotify(orbit.Strength);
-        m_StrengthValue.text = $"{orbit.Strength:0.00}x";
+        m_StrengthValue.text = orbit.DepthFit < 0.995f ? $"{orbit.Strength:0.00}x · fit {orbit.DepthFit * 100f:0}%" : $"{orbit.Strength:0.00}x";
     }
 
     void OnProgressChanged(float f)

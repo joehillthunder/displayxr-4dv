@@ -69,7 +69,89 @@ public class FourDVPlayer : MonoBehaviour
             if (Directory.Exists(DataDir(c))) m_Available.Add(c);
             else Debug.Log($"[4DV] Skipping {c.GSplat4DAsset.name}: no frame data at {DataDir(c)}");
         }
-        Select(Mathf.Max(0, m_Available.FindIndex(c => c.GSplat4DAsset.name == startClip)));
+        ConfigureRenderer();
+        if (s_Debug) LogRenderSettings();
+
+        // `-4dv-clip N` (0-based) opens on that clip instead of startClip.
+        var args = System.Environment.GetCommandLineArgs();
+        int a = System.Array.IndexOf(args, "-4dv-clip");
+        if (a >= 0 && a + 1 < args.Length && int.TryParse(args[a + 1], out int n)) Select(n);
+        else Select(Mathf.Max(0, m_Available.FindIndex(c => c.GSplat4DAsset.name == startClip)));
+    }
+
+    static readonly bool s_Debug = System.Array.IndexOf(System.Environment.GetCommandLineArgs(), "-4dv-debug") >= 0;
+    // The renderer feature's splat pool (4,194,304 in the v1.0.0 build) is the most splats it draws in a
+    // frame, and Badminton, Corridor, Horse Walk, Neemo and Unitree have 4.8-6.5M per segment: the rest
+    // were dropped. Grow it to the largest clip (power of two; 64 bytes a splat). The manager's opacity cut
+    // of 0.04 also dropped the faint splats a 4D clip fades through; 0.01 keeps them
+    // (`-4dv-opacity-cut x` overrides).
+    void ConfigureRenderer()
+    {
+        int need = 0;
+        foreach (var c in clips) if (c != null) need = Mathf.Max(need, c.GSplat4DAsset.maxSplatCount);
+        int pool = Mathf.NextPowerOfTwo(Mathf.Max(need, 1 << 20));
+
+        const System.Reflection.BindingFlags all = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+        var rp = UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline;
+        if (rp?.GetType().GetField("m_RendererDataList", all)?.GetValue(rp) is System.Array list)
+            foreach (var rd in list)
+                if (rd is UnityEngine.Rendering.Universal.ScriptableRendererData data)
+                    foreach (var feat in data.rendererFeatures)
+                    {
+                        // GaussianSplat4DFeature is internal to the plugin, so this goes through reflection.
+                        var t = feat?.GetType();
+                        var size = t?.GetField("splatPoolSize", all);
+                        if (t?.Name != "GaussianSplat4DFeature" || size == null) continue;
+                        int current = (int)size.GetValue(feat);
+                        if (current >= pool) continue;
+                        Debug.Log($"[4DV] Splat pool {current:N0} -> {pool:N0} (largest clip {need:N0} splats)");
+                        t.GetMethod("ReleaseRuntimeResources", all, null, System.Type.EmptyTypes, null)?.Invoke(feat, null);
+                        size.SetValue(feat, pool);
+                        feat.Create();
+                    }
+
+        // The compute shader also drops any splat narrower (2 sigma) than SplatCullTanThreshold x its distance.
+        // 4DV's 0.001 (0.057 degrees) suits a 100-degree headset; this panel's views span about 20 degrees in
+        // 1200 rows, so it threw away everything under about 3.4 pixels: hair, fur, edges, thin props. Half a
+        // pixel here is 0.00015 (`-4dv-size-cut x` overrides).
+        var mgr = FindAnyObjectByType<GaussianSplat4DManager>();
+        if (mgr != null)
+        {
+            mgr.SplatOpacityThreshold = ArgFloat("-4dv-opacity-cut", 0.01f);
+            mgr.SplatCullTanThreshold = ArgFloat("-4dv-size-cut", 0.00015f);
+        }
+    }
+
+    static float ArgFloat(string name, float fallback)
+    {
+        var args = System.Environment.GetCommandLineArgs();
+        int a = System.Array.IndexOf(args, name);
+        return a >= 0 && a + 1 < args.Length &&
+               float.TryParse(args[a + 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float v) ? v : fallback;
+    }
+
+    // Dump the 4DV plugin's quality settings (renderer feature, manager, each clip) to Player.log.
+    void LogRenderSettings()
+    {
+        const System.Reflection.BindingFlags all = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+        string Dump(object o)
+        {
+            var sb = new System.Text.StringBuilder(o.GetType().Name);
+            foreach (var f in o.GetType().GetFields(all))
+                if (f.FieldType.IsPrimitive || f.FieldType.IsEnum) sb.Append($" {f.Name}={f.GetValue(o)}");
+            return sb.ToString();
+        }
+        var rp = UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline;
+        var list = rp?.GetType().GetField("m_RendererDataList", all)?.GetValue(rp) as System.Array;
+        if (list != null)
+            foreach (var rd in list)
+                if (rd is UnityEngine.Rendering.Universal.ScriptableRendererData data)
+                    foreach (var feat in data.rendererFeatures)
+                        if (feat != null) Debug.Log($"[4DV-DBG] feature {Dump(feat)}");
+        var mgr = FindAnyObjectByType<GaussianSplat4DManager>();
+        if (mgr != null) Debug.Log($"[4DV-DBG] manager {Dump(mgr)}");
+        foreach (var c in clips)
+            if (c != null) Debug.Log($"[4DV-DBG] clip {c.GSplat4DAsset.name}: {Dump(c)} | {Dump(c.GSplat4DAsset)}");
     }
 
     // byteFolderPath is the editor path (Assets/StreamingAssets/GaussianAssets/<clip>); map it to the player's.
@@ -128,6 +210,47 @@ public class FourDVPlayer : MonoBehaviour
         StopAllCoroutines();
         StartCoroutine(LoadAudio(Current));
         ApplyView(Current);
+        if (orbit != null) orbit.SetDepthSamples(DepthSamples(Current));
+    }
+
+    // Centres of the clip's 256-splat chunks in world space, for FourDVOrbit's stereo depth budget. The
+    // first segment's <clip>_<n>_chunk.bytes holds 28 floats per chunk, starting with min xyz, max xyz; the
+    // plugin negates z when it unpacks positions (GaussianSplat4D.hlsl, UnpackChunk), so this does too.
+    readonly Dictionary<string, Vector3[]> m_DepthCache = new Dictionary<string, Vector3[]>();
+
+    Vector3[] DepthSamples(GaussianSplat4DSource src)
+    {
+        string name = src.GSplat4DAsset.name;
+        if (!m_DepthCache.TryGetValue(name, out var local))
+        {
+            local = null;
+            try
+            {
+                string dir = DataDir(src);
+                for (int seg = 0; seg < 4 && local == null; seg++)
+                {
+                    string path = Path.Combine(dir, $"{name}_{seg}_chunk.bytes");
+                    if (!File.Exists(path)) continue;
+                    var bytes = File.ReadAllBytes(path);
+                    if (bytes.Length == 0 || bytes.Length % 112 != 0) break;
+                    var f = new float[bytes.Length / 4];
+                    System.Buffer.BlockCopy(bytes, 0, f, 0, bytes.Length);
+                    local = new Vector3[f.Length / 28];
+                    for (int c = 0; c < local.Length; c++)
+                    {
+                        int b = c * 28;
+                        local[c] = new Vector3(f[b] + f[b + 3], f[b + 1] + f[b + 4], -(f[b + 2] + f[b + 5])) * 0.5f;
+                    }
+                }
+            }
+            catch (System.Exception e) { Debug.LogWarning($"[4DV] {name}: no depth samples ({e.Message})"); }
+            m_DepthCache[name] = local;
+        }
+        if (local == null) return null;
+        var m = src.transform.localToWorldMatrix;
+        var world = new Vector3[local.Length];
+        for (int i = 0; i < local.Length; i++) world[i] = m.MultiplyPoint3x4(local[i]);
+        return world;
     }
 
     public void Next() => Select(m_Index + 1);
@@ -217,6 +340,16 @@ public class FourDVPlayer : MonoBehaviour
             var parsed = text != null ? JsonUtility.FromJson<ViewOverrides>(text.text) : null;
             if (parsed?.views != null)
                 foreach (var v in parsed.views) s_Overrides[v.clip] = v;
+            // StreamingAssets/4dv-views.json (same format) wins, so an installed copy can be re-framed
+            // without a rebuild.
+            var path = Path.Combine(Application.streamingAssetsPath, "4dv-views.json");
+            try
+            {
+                var local = File.Exists(path) ? JsonUtility.FromJson<ViewOverrides>(File.ReadAllText(path)) : null;
+                if (local?.views != null)
+                    foreach (var v in local.views) s_Overrides[v.clip] = v;
+            }
+            catch (System.Exception e) { Debug.LogWarning($"[4DV] {path}: {e.Message}"); }
         }
         return s_Overrides.TryGetValue(clip, out var o) ? o : null;
     }
