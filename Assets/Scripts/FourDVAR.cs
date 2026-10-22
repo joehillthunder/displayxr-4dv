@@ -24,6 +24,7 @@ public class FourDVAR : MonoBehaviour
     GameObject m_Quad;
     Material m_Mat;
     Quaternion m_Ref;
+    Vector3 m_Gravity, m_GravityRef;
     bool m_HaveRef;
 
     void Awake()
@@ -80,7 +81,8 @@ public class FourDVAR : MonoBehaviour
         r.receiveShadows = false;
 
         if (AttitudeSensor.current != null) InputSystem.EnableDevice(AttitudeSensor.current);
-        else Debug.LogWarning("[4DV] AR: no attitude sensor; the clip won't stay put when the tablet turns");
+        else if (Accelerometer.current != null) InputSystem.EnableDevice(Accelerometer.current);
+        Debug.Log($"[4DV] AR: tracking with {(AttitudeSensor.current != null ? "the attitude sensor (gyroscope)" : Accelerometer.current != null ? "the accelerometer (tilt only)" : "nothing: no motion sensor")}");
         m_HaveRef = false;
         Active = true;
         Starting = false;
@@ -105,6 +107,7 @@ public class FourDVAR : MonoBehaviour
         if (m_Quad != null) { Destroy(m_Quad); m_Quad = null; }
         if (m_Mat != null) { Destroy(m_Mat); m_Mat = null; }
         if (AttitudeSensor.current != null && AttitudeSensor.current.enabled) InputSystem.DisableDevice(AttitudeSensor.current);
+        if (Accelerometer.current != null && Accelerometer.current.enabled) InputSystem.DisableDevice(Accelerometer.current);
     }
 
     void OnApplicationPause(bool paused)
@@ -128,12 +131,27 @@ public class FourDVAR : MonoBehaviour
     // negating z and w makes it Unity's left-handed frame, z into the screen.
     void UpdateTurn()
     {
+        Quaternion turn;
         var sensor = AttitudeSensor.current;
-        if (sensor == null || !sensor.enabled) return;
-        var q = sensor.attitude.ReadValue();
-        var u = new Quaternion(q.x, q.y, -q.z, -q.w);
-        if (!m_HaveRef) { m_Ref = u; m_HaveRef = true; }
-        var turn = Quaternion.Inverse(m_Ref) * u;
+        if (sensor != null && sensor.enabled)
+        {
+            var q = sensor.attitude.ReadValue();
+            var u = new Quaternion(q.x, q.y, -q.z, -q.w);
+            if (!m_HaveRef) { m_Ref = u; m_HaveRef = true; }
+            turn = Quaternion.Inverse(m_Ref) * u;
+        }
+        else if (Accelerometer.current != null && Accelerometer.current.enabled)
+        {
+            // Tilt only: gravity in the tablet's frame (z flipped to Unity's), low-pass filtered. When the tablet
+            // turns by R, gravity seen from it turns by R's inverse; turning about gravity itself can't be seen.
+            var a = Accelerometer.current.acceleration.ReadValue();
+            var g = new Vector3(a.x, a.y, -a.z);
+            if (g.sqrMagnitude < 1e-4f) return;
+            m_Gravity = m_HaveRef ? Vector3.Lerp(m_Gravity, g.normalized, 0.15f) : g.normalized;
+            if (!m_HaveRef) { m_GravityRef = m_Gravity; m_HaveRef = true; }
+            turn = Quaternion.Inverse(Quaternion.FromToRotation(m_GravityRef, m_Gravity));
+        }
+        else return;
         // Upside-down landscape: the screen's axes are the sensor's turned half a turn about z.
         if (Screen.orientation == ScreenOrientation.LandscapeRight)
         {

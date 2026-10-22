@@ -148,7 +148,7 @@ public class FourDVPanel : MonoBehaviour
 
     // Tablets have no keyboard: a toolbar in the top-right corner, always on screen, with depth, AR and the
     // sidebar toggle. With the sidebar hidden the clip fills the screen.
-    Text m_MenuLabel, m_ArLabel, m_ToolFitLabel, m_Status;
+    Text m_MenuLabel, m_ArLabel, m_ToolFitLabel, m_DetailLabel, m_Status;
     FourDVAR m_Ar;
 
     void BuildToolbar()
@@ -182,9 +182,10 @@ public class FourDVPanel : MonoBehaviour
         Tool("Depth -", () => orbit.StepStrength(-0.25f), out _);
         Tool("Depth +", () => orbit.StepStrength(+0.25f), out _);
         Tool("", () => orbit.FitDepth = !orbit.FitDepth, out m_ToolFitLabel);
+        Tool("", player.CycleDensity, out m_DetailLabel);
         if (m_Ar != null) Tool("AR", m_Ar.Toggle, out m_ArLabel);
         Tool("", ToggleVisible, out m_MenuLabel);
-        int count = m_Ar != null ? 5 : 4;
+        int count = m_Ar != null ? 6 : 5;
         rt.sizeDelta = new Vector2(count * 170 + (count - 1) * 12, 88);
 
         m_Status = Label(go.transform, "", 34, FontStyle.Bold, kText);
@@ -200,6 +201,13 @@ public class FourDVPanel : MonoBehaviour
         if (m_MenuLabel == null) return;
         m_MenuLabel.text = m_Visible ? "Hide" : "Menu";
         m_ToolFitLabel.text = orbit.FitDepth ? "Fit: on" : "Fit: off";
+        m_DetailLabel.text = player.Density switch
+        {
+            FourDVPlayer.DensityMode.Auto => player.DensityLevel == 0 ? "Detail: auto" : "Detail: auto ½",
+            FourDVPlayer.DensityMode.Full => "Detail: full",
+            FourDVPlayer.DensityMode.Half => "Detail: ½",
+            _ => "Detail: ¼",
+        };
         string depth = $"Depth {orbit.Strength * orbit.DepthFit:0.00}x";
         if (m_Ar != null)
         {
