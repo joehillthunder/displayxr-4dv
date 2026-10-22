@@ -17,20 +17,20 @@ using UnityEngine.InputSystem;
 // System doesn't get clicks from, so buttons come from the provider's window (displayxr_get_overlay_pointer)
 // and motion from Raw Input deltas, the same approach as DisplayXR's DefaultInputController sample.
 //
-// Android (FOURDV_LEIA, Nubia Pad / RedMagic 3D): Leia's own display-centric rig replaces DisplayXR:
+// Android (Nubia Pad 3D II / RedMagic 3D): DisplayXR's Android runtime is an OpenXR runtime, reached through
+// Unity's OpenXR plug-in (the DisplayXR Unity package has no Android plug-in):
 //
 //   Orbit Pivot (this)
-//     LeiaDisplay                                  on the pivot; Leia adds Head > LeftEye/RightEye cameras
-//                                                  at the tracked eye positions and weaves their textures
+//     XR Space (xrSpace)                           on the pivot, scaled to scene units per metre: the panel
+//       XR Camera (xrCamera)                       the runtime's tracked head pose, metres in front of it
 //
 // Touch:  one finger orbit · pinch zoom · two-finger drag pan · double tap reset view
 public class FourDVOrbit : MonoBehaviour
 {
     public DisplayXRDisplay display;
     public Camera fallbackCamera;
-#if FOURDV_LEIA
-    public LeiaUnity.LeiaDisplay leia;
-#endif
+    public Transform xrSpace;               // Android (OpenXR): the panel's frame
+    public Camera xrCamera;
 
     public static readonly Color Background = new Color(0.02f, 0.03f, 0.05f);
 
@@ -105,8 +105,10 @@ public class FourDVOrbit : MonoBehaviour
         m_DefaultHeight = Arg("-4dv-height", 1, displayHeight);
         UseDefaultHome();
         ScheduleScreenshotFromArgs();
-#if FOURDV_LEIA
-        if (leia != null) SetupLeiaPresent();
+#if UNITY_ANDROID && !UNITY_EDITOR
+        // The runtime's face tracker opens the front camera from this process (DisplayXR's client template).
+        if (xrSpace != null && !UnityEngine.Android.Permission.HasUserAuthorizedPermission(UnityEngine.Android.Permission.Camera))
+            UnityEngine.Android.Permission.RequestUserPermission(UnityEngine.Android.Permission.Camera);
 #endif
         DisplayXRProvider.EyeTrackingStateChanged += (tracked, mode) =>
             Debug.Log($"[4DV] Eye tracking {(tracked ? "ON" : "OFF")} (mode {mode})");
@@ -176,9 +178,6 @@ public class FourDVOrbit : MonoBehaviour
     {
         Is3D = on;
         if (ProviderActive()) DisplayXRProvider.RequestDisplayMode(on);
-#if FOURDV_LEIA
-        if (leia != null) leia.Set3DMode(on);
-#endif
     }
 
     public void StepStrength(float delta) => Strength = Mathf.Clamp(Strength + delta, 0f, MaxStrength);
@@ -220,18 +219,17 @@ public class FourDVOrbit : MonoBehaviour
     {
         panelW = 0.3444f; float panelH = 0.2153f; viewer = 0.6f;
         physW = panelW; physH = panelH;
-#if FOURDV_LEIA
-        if (leia != null)
+        if (xrSpace != null)
         {
-            // Leia reports the panel in its natural orientation; the app runs landscape.
-            float a = leia.WidthMM / 1000f, b = leia.HeightMM / 1000f;
-            bool landscape = Screen.width >= Screen.height;
-            physW = panelW = landscape ? Mathf.Max(a, b) : Mathf.Min(a, b);
-            physH = landscape ? Mathf.Min(a, b) : Mathf.Max(a, b);
-            viewer = Mathf.Max(leia.ViewingDistanceMM / 1000f, 0.1f);
+            // OpenXR doesn't report the panel's size; the screen's own DPI does. The viewing distance is the
+            // tracked head's, in the panel's frame (metres).
+            float dpi = Screen.dpi > 50f ? Screen.dpi : 250f;
+            physW = panelW = Screen.width / dpi * 0.0254f;
+            physH = Screen.height / dpi * 0.0254f;
+            float z = xrCamera != null ? Mathf.Abs(xrCamera.transform.localPosition.z) : 0f;
+            viewer = z > 0.2f && z < 1.5f ? z : 0.45f;
             return;
         }
-#endif
         if (DisplayXRProvider.TryGetDisplayInfo(out var info) && info.widthM > 0f && info.heightM > 0f)
         {
             panelW = info.widthM; panelH = info.heightM;
@@ -443,9 +441,7 @@ public class FourDVOrbit : MonoBehaviour
     void Apply()
     {
         transform.rotation = Quaternion.Euler(m_Pitch, m_Yaw, 0f);
-#if FOURDV_LEIA
-        if (leia != null) { ApplyLeia(); return; }
-#endif
+        if (xrSpace != null) { ApplyOpenXR(); return; }
         if (display == null) return;
         display.virtualDisplayHeight = displayHeight;
         UpdateDepthFit();
@@ -469,109 +465,41 @@ public class FourDVOrbit : MonoBehaviour
             ? new Vector3(0f, 0f, -d) : Vector3.zero;
     }
 
-#if FOURDV_LEIA
-    // Leia's eye cameras are real cameras at the tracked eye positions, so 4DV's plugin culls and sorts from
-    // each eye and needs no viewpoint override. Every camera that renders runs 4DV's splat pass, though,
-    // including Leia's head camera (its image is replaced by the woven one) and UI-event camera: those two
-    // use renderer 1, which has no splat feature. Leia copies camera settings to the eyes only once, so the
-    // background and near plane are set here each frame.
-    void ApplyLeia()
+    // DisplayXR's reference space has the panel at its origin and the viewer's tracked eyes in front of it, in
+    // metres, and the runtime computes each eye's off-axis projection itself. So xrSpace sits on the pivot,
+    // scaled to scene units per metre: the panel passes through the performer and shows displayHeight of scene,
+    // as on Windows, and the XR camera (the tracked head, so in front of the panel) is where 4DV's plugin culls
+    // and sorts from, with no viewpoint override.
+    void ApplyOpenXR()
     {
-        var t = leia.transform;
+        GetViewGeometry(out _, out _, out float viewer, out float spm);
+        var t = xrSpace;
+        t.localScale = Vector3.one * spm;
         t.localPosition = Vector3.zero;
         t.localRotation = Quaternion.identity;
         if (ArMode)
         {
-            // Turn the screen about the nominal eye point (viewer metres in front of it), not the pivot.
-            GetViewGeometry(out _, out _, out float viewer, out float spm);
+            // Turn the panel about the nominal eye point, not the pivot.
             var eye = new Vector3(0f, 0f, -viewer * spm);
             t.localRotation = ArTurn;
             t.localPosition = eye - ArTurn * eye;
         }
-        leia.VirtualHeight = displayHeight;
         UpdateDepthFit();
-        leia.DepthFactor = Strength * DepthFit;
-        if (leia.ViewersHead == null || leia.ViewersHead.eyes == null) return;
-
-        SetupLeiaCamera(leia.HeadCamera, 1);
-        foreach (var c in leia.GetComponentsInChildren<LeiaUnity.LeiaEventCamera>())
-            SetupLeiaCamera(c.GetComponent<Camera>(), 1);
-
+        if (xrCamera == null) return;
         // Clip anything more than s_MaxPopOut in front of the panel: see ApplyNearClip.
-        PanelGeometry(out _, out _, out float physH, out _);
-        float scenePerMetre = Mathf.Max(displayHeight, 1e-3f) / physH;
-        for (int i = 0; i < leia.ViewersHead.eyes.Count; i++)
-        {
-            var eye = leia.GetEyeCamera(i);
-            if (!SetupLeiaCamera(eye, 0)) continue;
-            float toPanel = Vector3.Dot(t.position - eye.transform.position, t.forward);
-            eye.nearClipPlane = Mathf.Max(0.01f, toPanel - s_MaxPopOut * scenePerMetre);
-            eye.farClipPlane = 1000f;
-        }
+        float toPanel = Vector3.Dot(t.position - xrCamera.transform.position, t.forward);
+        xrCamera.nearClipPlane = Mathf.Max(0.01f, toPanel - s_MaxPopOut * spm);
+        xrCamera.farClipPlane = 1000f;
+        if (s_Debug && Time.frameCount % 120 == 0)
+            Debug.Log($"[4DV-DBG] xr head {xrCamera.transform.localPosition.ToString("F3")} m, panel {Screen.width}x{Screen.height} @ {Screen.dpi} dpi, near {xrCamera.nearClipPlane:0.00}");
     }
 
-    // Leia's own presentation (Head's end-of-frame blit of the woven texture to the camera target) shows
-    // nothing on Vulkan on the Nubia Pad 3D II, Leia's own sample included: the screen stays black. So the app
-    // runs Leia's weave itself once the cameras have rendered, into a screen-sized texture, and shows that
-    // through a screen-space UI layer behind the panel (the path the panel is drawn by, which works).
-    RenderTexture m_Woven;
-    UnityEngine.UI.RawImage m_WovenImage;
-
-    void SetupLeiaPresent()
-    {
-        var go = new GameObject("Leia Woven Image", typeof(RectTransform), typeof(Canvas), typeof(UnityEngine.UI.RawImage));
-        go.transform.SetParent(transform, false);
-        var canvas = go.GetComponent<Canvas>();
-        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-        canvas.sortingOrder = -100;
-        m_WovenImage = go.GetComponent<UnityEngine.UI.RawImage>();
-        m_WovenImage.raycastTarget = false;
-        m_WovenImage.color = Color.white;
-        UnityEngine.Rendering.RenderPipelineManager.endContextRendering += WeaveLeia;
-    }
-
-    void WeaveLeia(UnityEngine.Rendering.ScriptableRenderContext context, System.Collections.Generic.List<Camera> cameras)
-    {
-        var device = LeiaUnity.RenderTrackingDevice.Instance;
-        if (leia == null || leia.ViewersHead == null || device == null || leia.GetEyeCamera(0).targetTexture == null) return;
-        if (m_Woven == null || m_Woven.width != Screen.width || m_Woven.height != Screen.height)
-        {
-            if (m_Woven != null) { m_Woven.Release(); Destroy(m_Woven); }
-            m_Woven = new RenderTexture(Screen.width, Screen.height, 0, RenderTextureFormat.ARGB32) { name = "Leia Woven" };
-            m_Woven.Create();
-            m_WovenImage.texture = m_Woven;
-            var eye = leia.GetEyeCamera(0).targetTexture;
-            Debug.Log($"[4DV] Leia weave {m_Woven.width}x{m_Woven.height} from views {eye.width}x{eye.height}");
-        }
-        device.Render(leia, ref m_Woven);
-    }
-
-    void OnDestroy()
-    {
-        UnityEngine.Rendering.RenderPipelineManager.endContextRendering -= WeaveLeia;
-        if (m_Woven != null) m_Woven.Release();
-    }
-
-    static bool SetupLeiaCamera(Camera cam, int renderer)
-    {
-        if (cam == null) return false;
-        cam.clearFlags = CameraClearFlags.SolidColor;
-        cam.backgroundColor = Background;
-        var data = cam.GetComponent<UnityEngine.Rendering.Universal.UniversalAdditionalCameraData>();
-        if (data == null) data = cam.gameObject.AddComponent<UnityEngine.Rendering.Universal.UniversalAdditionalCameraData>();
-        data.SetRenderer(renderer);
-        return true;
-    }
-#endif
-
-    // The virtual screen (what the woven image shows): Leia's display on Android, DisplayXR's elsewhere.
+    // The virtual screen (what the woven image shows): the XR space on Android, DisplayXR's display elsewhere.
     public Transform ScreenTransform
     {
         get
         {
-#if FOURDV_LEIA
-            if (leia != null) return leia.transform;
-#endif
+            if (xrSpace != null) return xrSpace;
             return display != null ? display.transform : null;
         }
     }

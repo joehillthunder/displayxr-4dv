@@ -14,9 +14,9 @@ using UnityEngine.XR.Management;
 //   Unity.exe -batchmode -quit -projectPath . -executeMethod FourDVSetup.Setup
 //   Unity.exe -batchmode -quit -projectPath . -executeMethod FourDVSetup.Build
 //
-// Android (Nubia Pad / RedMagic 3D), in a separate checkout (Leia's plugin must never reach the Windows
-// build), two runs because the first one changes what compiles:
-//   Unity.exe -batchmode -quit -buildTarget Android -projectPath . -executeMethod FourDVSetup.PrepareAndroid [-leia-package path]
+// Android (Nubia Pad 3D II / RedMagic 3D, through DisplayXR's Android OpenXR runtime), two runs because the
+// first one changes what compiles:
+//   Unity.exe -batchmode -quit -buildTarget Android -projectPath . -executeMethod FourDVSetup.PrepareAndroid
 //   Unity.exe -batchmode -quit -buildTarget Android -projectPath . -executeMethod FourDVSetup.BuildAndroid [-4dv-clips a,b,c]
 public static class FourDVSetup
 {
@@ -24,9 +24,7 @@ public static class FourDVSetup
     const string kClipFolder = "Assets/GaussianSplatAssets";
     const string kPipelinePath = "Assets/Settings/URP-Pipeline.asset";
     const string kRendererPath = "Assets/Settings/URP-Renderer.asset";
-    const string kPlainRendererPath = "Assets/Settings/URP-Renderer-Plain.asset";
     const string kProductName = "4DV Viewer";
-    const string kLeiaFolder = "Assets/Leia";
     public const string kAndroidId = "com.displayxrdemos.fourdvviewer";
     // The lighter clips for a tablet (88-353 MB each, about 1 GB together); `-4dv-clips a,b,c` overrides.
     static readonly string[] kAndroidClips = { "dance_sample.c", "cat_high", "Kat_Miche_10s_150w", "TimTalk_iPhone17", "dance2" };
@@ -48,10 +46,6 @@ public static class FourDVSetup
     [MenuItem("4DV/Build Windows Player")]
     public static void Build()
     {
-        // Leia's plugin starts its own Windows SR weaving at load (WindowedWeavingInitializer, SRSystemHandler),
-        // which fights DisplayXR for the panel.
-        if (Directory.Exists(kLeiaFolder))
-            Fail($"{kLeiaFolder} (Leia's Unity plugin, for Android) is in this project. Build Windows from a checkout without it.");
         Setup(false);
         var outDir = Path.GetFullPath("Builds/Win64/4DV-Viewer");
         Directory.CreateDirectory(outDir);
@@ -71,30 +65,16 @@ public static class FourDVSetup
 
     // ---- Android ----
 
-    // Imports Leia's Unity plugin (LeiaUnity-3.3.2, from support.immersity.ai/sdk; it's proprietary, so it
-    // isn't in git) and turns on the Android defines. Scripts recompile after this returns, so the build is a
-    // second run.
-    [MenuItem("4DV/Android/1. Prepare (import Leia plugin)")]
+    // Android defines, then the switch to Android. Scripts recompile after this returns, so the build is a
+    // second run. DISPLAYXR_NO_SPLASH: DisplayXR's boot splash rig is for its desktop provider; on Android it
+    // would add a second camera.
+    [MenuItem("4DV/Android/1. Prepare")]
     public static void PrepareAndroid()
     {
-        if (!Directory.Exists(kLeiaFolder))
-        {
-            var package = ArgValue("-leia-package") ?? FindLeiaPackage();
-            if (package == null || !File.Exists(package))
-                Fail("Leia's Unity plugin not found. Download LeiaUnity (Unity, Windows + Android) from support.immersity.ai/sdk " +
-                     "and pass -leia-package <path to .unitypackage>.");
-            Debug.Log($"[4DV] Importing {package}");
-            UnpackUnityPackage(package);
-        }
-        PatchLeia();
-        AssetDatabase.Refresh();
-        // FOURDV_LEIA: the app's Leia rig. LEIA_URP_DETECTED: Leia's URP paths (its editor adds it on reload,
-        // set here too so a headless run doesn't depend on that). DISPLAYXR_NO_SPLASH: DisplayXR's boot splash
-        // spawns its own camera, which would cover Leia's.
         var target = UnityEditor.Build.NamedBuildTarget.Android;
-        var defines = PlayerSettings.GetScriptingDefineSymbols(target).Split(';').Where(d => d.Length > 0).ToList();
-        foreach (var d in new[] { "FOURDV_LEIA", "LEIA_URP_DETECTED", "DISPLAYXR_NO_SPLASH" })
-            if (!defines.Contains(d)) defines.Add(d);
+        var defines = PlayerSettings.GetScriptingDefineSymbols(target).Split(';')
+            .Where(d => d.Length > 0 && d != "FOURDV_LEIA" && d != "LEIA_URP_DETECTED").ToList();
+        if (!defines.Contains("DISPLAYXR_NO_SPLASH")) defines.Add("DISPLAYXR_NO_SPLASH");
         PlayerSettings.SetScriptingDefineSymbols(target, string.Join(";", defines));
         if (EditorUserBuildSettings.activeBuildTarget != BuildTarget.Android)
             EditorUserBuildSettings.SwitchActiveBuildTarget(BuildTargetGroup.Android, BuildTarget.Android);
@@ -102,83 +82,11 @@ public static class FourDVSetup
         Debug.Log("[4DV] Android prepared; now run FourDVSetup.BuildAndroid");
     }
 
-    // AssetDatabase.ImportPackage only queues the import, so a -batchmode -quit run exits before anything lands.
-    // A .unitypackage is a tar.gz of <guid>/{pathname, asset, asset.meta}: unpack it with Windows' tar and copy
-    // each asset and its meta to its path.
-    static void UnpackUnityPackage(string package)
-    {
-        var tmp = Path.Combine(Path.GetTempPath(), "4dv-unitypackage-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(tmp);
-        try
-        {
-            var tar = new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "tar.exe"), $"-xzf \"{package}\" -C \"{tmp}\"")
-                { UseShellExecute = false, CreateNoWindow = true };
-            using (var p = System.Diagnostics.Process.Start(tar))
-            {
-                p.WaitForExit();
-                if (p.ExitCode != 0) Fail($"tar couldn't unpack {package} ({p.ExitCode})");
-            }
-            int files = 0;
-            foreach (var dir in Directory.GetDirectories(tmp))
-            {
-                var pathname = Path.Combine(dir, "pathname");
-                if (!File.Exists(pathname)) continue;
-                var rel = File.ReadAllLines(pathname)[0].Trim();
-                if (!rel.StartsWith(kLeiaFolder + "/", StringComparison.Ordinal) && rel != kLeiaFolder) continue;
-                var asset = Path.Combine(dir, "asset");
-                if (File.Exists(asset))
-                {
-                    Directory.CreateDirectory(Path.GetDirectoryName(rel));
-                    File.Copy(asset, rel, true);
-                    files++;
-                }
-                else Directory.CreateDirectory(rel);
-                var meta = Path.Combine(dir, "asset.meta");
-                if (File.Exists(meta)) File.Copy(meta, rel + ".meta", true);
-            }
-            Debug.Log($"[4DV] Unpacked {files} files to {kLeiaFolder}");
-        }
-        finally { Directory.Delete(tmp, true); }
-    }
-
-    // Two fixes to LeiaUnity 3.3.2's Android code (its sample has both problems too):
-    // - RenderTrackingDevice.Update (Android only) tests `is3DScene`, a field that's called
-    //   sceneContainsLeiaDisplay everywhere else, so an Android player doesn't compile.
-    // - Interlacer.SetOutput hands the native interlacer the output RenderTexture's GetNativeTexturePtr. On
-    //   Vulkan a render target has to go through its color buffer; otherwise the interlacer's first
-    //   vkCreateFramebuffer dereferences a null image view and the app crashes on its first frame.
-    static void PatchLeia()
-    {
-        Patch(kLeiaFolder + "/Devices/RenderTrackingDevice.cs",
-              "if(!is3DScene) return;", "if(!sceneContainsLeiaDisplay) return;");
-        Patch(kLeiaFolder + "/Devices/AndroidLeiaDevice/CNSDK/dotnet/core/interlacer.cs",
-              "leiaSdkUnityRenderingPluginSetOutput(output.GetNativeTexturePtr(), output.width, output.height);",
-              "leiaSdkUnityRenderingPluginSetOutput(SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Vulkan\n" +
-              "                ? output.colorBuffer.GetNativeRenderBufferPtr() : output.GetNativeTexturePtr(), output.width, output.height);   // patched by FourDVSetup");
-    }
-
-    static void Patch(string path, string from, string to)
-    {
-        if (!File.Exists(path)) return;
-        var text = File.ReadAllText(path);
-        if (!text.Contains(from)) return;
-        File.WriteAllText(path, text.Replace(from, to));
-        Debug.Log($"[4DV] Patched {path}");
-    }
-
-    static string FindLeiaPackage()
-    {
-        var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "ImmersitySDK");
-        return Directory.Exists(dir)
-            ? Directory.GetFiles(dir, "LeiaUnity-*.unitypackage", SearchOption.AllDirectories).OrderByDescending(p => p).FirstOrDefault()
-            : null;
-    }
-
     [MenuItem("4DV/Android/2. Build APK")]
     public static void BuildAndroid()
     {
-#if !FOURDV_LEIA
-        Fail("FOURDV_LEIA isn't defined for this editor session: run FourDVSetup.PrepareAndroid first, and pass -buildTarget Android.");
+#if !DISPLAYXR_NO_SPLASH
+        Fail("Android defines aren't set for this editor session: run FourDVSetup.PrepareAndroid first, and pass -buildTarget Android.");
 #else
         // Clip data goes to the tablet over USB (Tools/push-android-clips.ps1), never into the APK.
         if (Directory.Exists("Assets/StreamingAssets/GaussianAssets"))
@@ -200,9 +108,8 @@ public static class FourDVSetup
 #endif
     }
 
-    // Leia's recommended Android settings (ARM64, IL2CPP, API 29+, no minify), except the graphics API: Leia
-    // suggests OpenGL ES 3, but 4DV's GPU sort needs wave intrinsics, which Unity only compiles for Vulkan
-    // there. Leia's Android interlacer has a Vulkan path.
+    // Vulkan only: 4DV's GPU sort needs wave intrinsics, which Unity only compiles for Vulkan on Android, and
+    // DisplayXR's Android compositor is Vulkan. ARM64 + IL2CPP, API 29+.
     static void SetupAndroidPlayer()
     {
         PlayerSettings.SetApplicationIdentifier(BuildTargetGroup.Android, kAndroidId);
@@ -323,22 +230,6 @@ public static class FourDVSetup
             pipeline = UniversalRenderPipelineAsset.Create(renderer);
             AssetDatabase.CreateAsset(pipeline, kPipelinePath);
         }
-        // Renderer 1 has no splat feature, for cameras whose image is thrown away (Leia's head and UI-event
-        // cameras on Android); every camera on renderer 0 runs 4DV's sort and draw.
-        var plain = AssetDatabase.LoadAssetAtPath<UniversalRendererData>(kPlainRendererPath);
-        if (plain == null)
-        {
-            plain = ScriptableObject.CreateInstance<UniversalRendererData>();
-            AssetDatabase.CreateAsset(plain, kPlainRendererPath);
-        }
-        var pso = new SerializedObject(pipeline);
-        var renderers = pso.FindProperty("m_RendererDataList");
-        if (renderers.arraySize < 2) renderers.arraySize = 2;
-        renderers.GetArrayElementAtIndex(0).objectReferenceValue = renderer;
-        renderers.GetArrayElementAtIndex(1).objectReferenceValue = plain;
-        pso.FindProperty("m_DefaultRendererIndex").intValue = 0;
-        pso.ApplyModifiedPropertiesWithoutUndo();
-
         // MSAA off and no upscaler: the OpenXR validator rejects FSR/STP, and splats don't need MSAA.
         pipeline.msaaSampleCount = 1;
         pipeline.upscalingFilter = UpscalingFilterSelection.Auto;
@@ -376,6 +267,26 @@ public static class FourDVSetup
         EditorUtility.SetDirty(perTarget);
         EditorUtility.SetDirty(general);
         EditorUtility.SetDirty(manager);
+
+        // Android: DisplayXR's runtime is an OpenXR runtime there, found by the Khronos loader Unity's OpenXR
+        // package ships (manifest entries in Plugins/Android/DisplayXRClient.androidlib). Multi-pass: each eye
+        // renders as its own camera pass, so 4DV's plugin culls and sorts per eye.
+        if (!perTarget.HasSettingsForBuildTarget(BuildTargetGroup.Android))
+            perTarget.CreateDefaultSettingsForBuildTarget(BuildTargetGroup.Android);
+        if (!perTarget.HasManagerSettingsForBuildTarget(BuildTargetGroup.Android))
+            perTarget.CreateDefaultManagerSettingsForBuildTarget(BuildTargetGroup.Android);
+        var android = perTarget.SettingsForBuildTarget(BuildTargetGroup.Android);
+        android.InitManagerOnStart = true;
+        XRPackageMetadataStore.RemoveLoader(android.Manager, "DisplayXR.DisplayXRDisplayLoader", BuildTargetGroup.Android);
+        XRPackageMetadataStore.AssignLoader(android.Manager, "UnityEngine.XR.OpenXR.OpenXRLoader", BuildTargetGroup.Android);
+        var openxr = UnityEngine.XR.OpenXR.OpenXRSettings.GetSettingsForBuildTargetGroup(BuildTargetGroup.Android);
+        if (openxr != null)
+        {
+            openxr.renderMode = UnityEngine.XR.OpenXR.OpenXRSettings.RenderMode.MultiPass;
+            EditorUtility.SetDirty(openxr);
+        }
+        EditorUtility.SetDirty(android);
+        EditorUtility.SetDirty(android.Manager);
     }
 
     static void SetupPlayer()
@@ -417,22 +328,23 @@ public static class FourDVSetup
         var orbit = pivot.AddComponent<FourDVOrbit>();
         if (android)
         {
-#if FOURDV_LEIA
-            // Leia's display on the pivot. Its Update builds the Head and eye cameras the first time it runs
-            // (in the editor, as when the component is added by hand); they must be saved in the scene, since
-            // LeiaDisplay.OnEnable reads the head camera at startup.
-            var leiaGo = new GameObject("LeiaDisplay");
-            leiaGo.transform.SetParent(pivot.transform, false);
-            var leia = leiaGo.AddComponent<LeiaUnity.LeiaDisplay>();
-            leia.Update();
-            if (leia.ViewersHead == null) Fail("LeiaDisplay didn't build its Head and eye cameras");
-            var head = leia.HeadCamera;
-            head.tag = "MainCamera";
-            head.clearFlags = CameraClearFlags.SolidColor;
-            head.backgroundColor = FourDVOrbit.Background;
-            head.nearClipPlane = 0.05f;
-            head.farClipPlane = 1000f;
-            orbit.leia = leia;
+            // DisplayXR's Android runtime through Unity's OpenXR: the panel's frame on the pivot (FourDVOrbit
+            // scales it to scene units per metre), and the XR camera in it, driven by the runtime's head pose.
+            var space = new GameObject("XR Space");
+            space.transform.SetParent(pivot.transform, false);
+            var camGo = new GameObject("XR Camera") { tag = "MainCamera" };
+            camGo.transform.SetParent(space.transform, false);
+            camGo.transform.localPosition = new Vector3(0f, 0f, -0.45f);
+            var cam = camGo.AddComponent<Camera>();
+            cam.clearFlags = CameraClearFlags.SolidColor;
+            cam.backgroundColor = FourDVOrbit.Background;
+            cam.nearClipPlane = 0.05f;
+            cam.farClipPlane = 1000f;
+            cam.stereoTargetEye = StereoTargetEyeMask.Both;
+            camGo.AddComponent<UniversalAdditionalCameraData>();
+            AddComponentByName(camGo, "UnityEngine.SpatialTracking.TrackedPoseDriver");   // center eye, rotation and position
+            orbit.xrSpace = space.transform;
+            orbit.xrCamera = cam;
 
             // AR: rear-camera image behind the clip, gyroscope placement (FourDVAR).
             const string kArMaterialPath = "Assets/Settings/AR-CameraImage.mat";
@@ -445,7 +357,6 @@ public static class FourDVSetup
             var ar = pivot.AddComponent<FourDVAR>();
             ar.orbit = orbit;
             ar.backgroundMaterial = arMat;
-#endif
         }
         else
         {

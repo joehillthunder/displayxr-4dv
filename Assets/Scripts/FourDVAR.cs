@@ -2,13 +2,13 @@ using System.Collections;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-// AR view for Leia's Android tablets: the rear camera's live image behind the clip, and the tablet's gyroscope
+// AR view for the Android 3D tablets (Nubia Pad 3D II, RedMagic 3D): the rear camera's live image behind the clip, and the tablet's gyroscope
 // keeping the clip fixed in the room as the tablet turns. Three degrees of freedom (turning, not walking
 // around): ARCore doesn't list the Nubia Pad 3D II or RedMagic 3D Explorer, and Unity's ARCore plug-in only
 // renders with Vulkan (which 4DV's sort needs) from AR Foundation 6.1 on Unity 6.
 //
 // The camera image is a quad parented to the screen, backgroundDepth display-heights behind it, so both eyes
-// see it at one depth behind the clip. Leia's face tracking keeps the front camera; this opens the rear one.
+// see it at one depth behind the clip. Face tracking keeps the front camera; this opens the rear one.
 // Double tap (FourDVOrbit.ResetView) re-places the clip in front of the tablet.
 public class FourDVAR : MonoBehaviour
 {
@@ -162,10 +162,12 @@ public class FourDVAR : MonoBehaviour
         float qh = h * grow, qw = qh * aspect;
         if (qw < w * grow) { qw = w * grow; qh = qw / aspect; }
 
+        // The screen's frame may be scaled (Android's XR space is in metres): place the quad in its units.
+        float k = 1f / Mathf.Max(screen.lossyScale.x, 1e-6f);
         var t = m_Quad.transform;
-        t.localPosition = new Vector3(0f, 0f, behind);
+        t.localPosition = new Vector3(0f, 0f, behind * k);
         t.localRotation = Quaternion.Euler(0f, 0f, -angle);
-        t.localScale = sideways ? new Vector3(qh, qw, 1f) : new Vector3(qw, qh, 1f);
+        t.localScale = (sideways ? new Vector3(qh, qw, 1f) : new Vector3(qw, qh, 1f)) * k;
         bool flipY = m_Cam.videoVerticallyMirrored;
         m_Mat.mainTextureScale = new Vector2(1f, flipY ? -1f : 1f);
         m_Mat.mainTextureOffset = new Vector2(0f, flipY ? 1f : 0f);
