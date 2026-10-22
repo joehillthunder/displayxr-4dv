@@ -36,6 +36,7 @@ public class FourDVOrbit : MonoBehaviour
     // display_info: 0.2600 x 0.1630 m on the Nubia Pad 3D II; Android's reported 320 dpi would say 0.127 m).
     public Vector3 xrPanelOrigin = new Vector3(0f, 1.6f, 0f);
     public Vector2 xrPanelSize = new Vector2(0.26f, 0.163f);
+    public float xrNominalViewer = 0.5f;    // metres; the runtime's display_info nominal z
 
     public static readonly Color Background = new Color(0.02f, 0.03f, 0.05f);
 
@@ -229,8 +230,7 @@ public class FourDVOrbit : MonoBehaviour
             // The viewing distance is the tracked head's, from the panel (metres).
             physW = panelW = xrPanelSize.x;
             physH = xrPanelSize.y;
-            float z = xrCamera != null ? Mathf.Abs(xrCamera.transform.localPosition.z - xrPanelOrigin.z) : 0f;
-            viewer = z > 0.2f && z < 1.5f ? z : 0.45f;
+            viewer = xrNominalViewer;
             return;
         }
         if (DisplayXRProvider.TryGetDisplayInfo(out var info) && info.widthM > 0f && info.heightM > 0f)
@@ -499,11 +499,13 @@ public class FourDVOrbit : MonoBehaviour
         if (xrCamera == null) return;
 
         var head = UnityEngine.XR.InputDevices.GetDeviceAtXRNode(UnityEngine.XR.XRNode.CenterEye);
-        Vector3 headPos = xrPanelOrigin + new Vector3(0f, 0f, -0.45f);
+        Vector3 headPos = xrPanelOrigin + new Vector3(0f, 0f, -0.5f);
         if (head.isValid) head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.centerEyePosition, out headPos);
         var c = xrCamera.transform;
         c.localRotation = Quaternion.identity;
-        c.localPosition = rig ? (headPos - xrPanelOrigin) * spm : headPos;
+        // With the rig, the head Unity reports sits on the panel, so 4DV culls from the nominal viewer instead
+        // (the runtime's nominal distance, scaled into the rig), as ApplySplatViewpoint does on Windows.
+        c.localPosition = rig ? new Vector3(0f, 0f, -xrNominalViewer * spm) : headPos;
 
         // Clip anything more than s_MaxPopOut in front of the panel: see ApplyNearClip.
         var panel = ScreenTransform;
