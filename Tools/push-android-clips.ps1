@@ -61,5 +61,8 @@ foreach ($clip in $Clips) {
     & $Adb push (Get-ChildItem $dir -File).FullName "$dest/$clip/"
     if ($LASTEXITCODE) { throw "Copy of $clip failed" }
 }
+# Folders adb creates belong to `shell` with no access for others, and the app is "others": the plugin then
+# reports every file missing.
+& $Adb shell "chmod -R a+rX $dest"
 & $Adb shell du -sh $dest
 'Done. Open "4DV Viewer" on the tablet.'
