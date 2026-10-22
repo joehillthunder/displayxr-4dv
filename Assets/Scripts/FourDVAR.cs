@@ -11,11 +11,12 @@ using UnityEngine.InputSystem;
 // detected. Instead the gyroscope gives the tablet's orientation against gravity (3 degrees of freedom: turning,
 // not walking around), and the surface is a horizontal plane SurfaceDrop metres below the rear camera:
 //
+//   (before any tap the figure follows the centre of the view, on the surface)
 //   tap        place the figure where the tap's ray from the camera meets the plane
 //   drag       move it along the plane
 //   pinch      scale it (figurine to life size)
 //   two-finger vertical drag   raise / lower the plane until the feet sit on the real surface
-//   double tap re-place it in front, at the screen centre
+//   double tap pick it up again (it follows the view until the next tap)
 //
 // DisplayXR renders through a camera rig matching the rear camera's field of view (DisplayXRAndroidFeature),
 // so the figure lines up with the camera image. The runtime's window sits over the app's and blends by alpha,
@@ -211,10 +212,11 @@ public class FourDVAR : MonoBehaviour
     {
         // The XR space is the rear camera: at the world origin, turned like the tablet against gravity.
         var cam = orbit.xrSpace;
-        cam.SetPositionAndRotation(Vector3.zero, DeviceRotation());
+        if (!TryDeviceRotation(out var rotation)) return;   // no sensor reading yet
+        cam.SetPositionAndRotation(Vector3.zero, rotation);
         cam.localScale = Vector3.one;
         HandleTouch(cam);
-        if (!m_Placed) PlaceAt(new Vector2(Screen.width * 0.5f, Screen.height * 0.4f), cam);
+        if (!m_Placed) PlaceAt(new Vector2(Screen.width * 0.5f, Screen.height * 0.4f), cam, false);
 
         // The figure: feet on the surface at the spot, upright, facing the camera.
         var toCam = -m_Spot;
@@ -231,7 +233,8 @@ public class FourDVAR : MonoBehaviour
         DisplayXRAndroidFeature.VerticalFov = m_VFov;
         DisplayXRAndroidFeature.ConvergenceDiopters = 1f / dist;
         DisplayXRAndroidFeature.IpdFactor = orbit.Is3D ? orbit.Strength : 0f;
-        Status = $"Size {FigureScale * 100f:0}% · surface {SurfaceDrop * 100f:0} cm below";
+        Status = m_Placed ? $"Size {FigureScale * 100f:0}% · surface {SurfaceDrop * 100f:0} cm below"
+                          : "Aim at a table or the floor · tap to place";
         if (s_Debug && Time.frameCount % 90 == 0)
         {
             var local = cam.InverseTransformPoint(m_Spot);
@@ -282,15 +285,17 @@ public class FourDVAR : MonoBehaviour
     // Tablet orientation in a y-up world: Android's rotation vector is device-to-earth (x east, y north, z up)
     // in a right-handed frame; negating z and w makes it left-handed (device z into the screen, i.e. along the
     // rear camera), and the 90-degree turn about x maps earth-z-up to Unity's y-up.
-    Quaternion DeviceRotation()
+    bool TryDeviceRotation(out Quaternion rotation)
     {
+        rotation = Quaternion.identity;
         var sensor = AttitudeSensor.current;
         if (sensor != null && sensor.enabled)
         {
             var q = sensor.attitude.ReadValue();
-            var r = Quaternion.Euler(90f, 0f, 0f) * new Quaternion(q.x, q.y, -q.z, -q.w);
-            if (Screen.orientation == ScreenOrientation.LandscapeRight) r *= Quaternion.Euler(0f, 0f, 180f);
-            return r;
+            if (q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w < 0.5f) return false;   // not reporting yet
+            rotation = Quaternion.Euler(90f, 0f, 0f) * new Quaternion(q.x, q.y, -q.z, -q.w);
+            if (Screen.orientation == ScreenOrientation.LandscapeRight) rotation *= Quaternion.Euler(0f, 0f, 180f);
+            return true;
         }
         // Accelerometer only: tilt from gravity, no heading.
         if (Accelerometer.current != null && Accelerometer.current.enabled)
@@ -298,10 +303,12 @@ public class FourDVAR : MonoBehaviour
             var a = Accelerometer.current.acceleration.ReadValue();
             var g = new Vector3(a.x, a.y, -a.z);
             if (g.sqrMagnitude > 1e-4f) m_Gravity = Vector3.Lerp(m_Gravity.sqrMagnitude > 0f ? m_Gravity : g.normalized, g.normalized, 0.15f);
+            if (m_Gravity.sqrMagnitude < 1e-6f) return false;
             // device-frame "up" is -gravity (the accelerometer reads the reaction to gravity: +up)
-            return Quaternion.FromToRotation(m_Gravity.normalized, Vector3.up);
+            rotation = Quaternion.FromToRotation(m_Gravity.normalized, Vector3.up);
+            return true;
         }
-        return Quaternion.identity;
+        return true;
     }
 
     // The point on the surface (a horizontal plane SurfaceDrop below the camera) under a screen position.
@@ -320,9 +327,10 @@ public class FourDVAR : MonoBehaviour
         return true;
     }
 
-    void PlaceAt(Vector2 screenPos, Transform cam)
+    // put: the user placed it (it stays); otherwise it's the preview following the view.
+    void PlaceAt(Vector2 screenPos, Transform cam, bool put = true)
     {
-        if (RayToSurface(screenPos, cam, out var hit)) { m_Spot = hit; m_Placed = true; }
+        if (RayToSurface(screenPos, cam, out var hit)) { m_Spot = hit; m_Placed |= put; }
         else if (!m_Placed)
         {
             // Pointing at or above the horizon: put it 1 m ahead, on the surface.
