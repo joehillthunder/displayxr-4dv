@@ -14,9 +14,7 @@
         <intent>
             <action android:name="org.khronos.openxr.OpenXRRuntimeService" />
         </intent>
-        <provider
-            android:authorities="org.khronos.openxr.runtime_broker"
-            tools:replace="android:authorities" />
+        <!-- The runtime_broker <provider> query comes from Unity's openxr_loader AAR itself. -->
         <package android:name="org.freedesktop.monado.openxr_runtime.in_process" />
         <package android:name="org.freedesktop.monado.openxr_runtime.out_of_process" />
         <intent>
