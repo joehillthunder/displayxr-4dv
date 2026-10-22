@@ -517,18 +517,23 @@ public class FourDVOrbit : MonoBehaviour
         if (xrCamera == null) return;
 
         var head = UnityEngine.XR.InputDevices.GetDeviceAtXRNode(UnityEngine.XR.XRNode.CenterEye);
-        Vector3 headPos = xrPanelOrigin + new Vector3(0f, 0f, -0.5f);
+        Vector3 headPos = Vector3.zero;   // device space: the tracked head (the runtime anchors it at the panel)
         if (head.isValid) head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.centerEyePosition, out headPos);
         var c = xrCamera.transform;
         c.localRotation = Quaternion.identity;
-        // With the rig, the head Unity reports sits on the panel, so 4DV culls from the nominal viewer instead
-        // (the runtime's nominal distance, scaled into the rig), as ApplySplatViewpoint does on Windows.
-        c.localPosition = rig ? new Vector3(0f, 0f, -xrNominalViewer * spm) : headPos;
+        // Unity renders each eye at this transform plus the eye's offset from the tracked head, so the camera
+        // must be the tracked head itself (with the rig, the runtime's eye offsets are already in scene units).
+        // 4DV's plugin culls and sorts from worldToCameraMatrix, which XR rendering doesn't use: point that
+        // from the nominal viewer in front of the display, as ApplySplatViewpoint does on Windows.
+        c.localPosition = headPos;
+        var panel = ScreenTransform;
+        float viewerUnits = viewer * spm;
+        Vector3 nominal = panel.position - panel.forward * viewerUnits;
+        xrCamera.worldToCameraMatrix = Matrix4x4.Scale(new Vector3(1f, 1f, -1f)) *
+                                       Matrix4x4.TRS(nominal, panel.rotation, Vector3.one).inverse;
 
         // Clip anything more than s_MaxPopOut in front of the panel: see ApplyNearClip.
-        var panel = ScreenTransform;
-        float toPanel = Vector3.Dot(panel.position - c.position, panel.forward);
-        xrCamera.nearClipPlane = Mathf.Max(0.01f, toPanel - s_MaxPopOut * spm);
+        xrCamera.nearClipPlane = Mathf.Max(0.01f, viewerUnits - s_MaxPopOut * spm);
         xrCamera.farClipPlane = 1000f;
         if (s_Debug && Time.frameCount % 120 == 0)
         {
