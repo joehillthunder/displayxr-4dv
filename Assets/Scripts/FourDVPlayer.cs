@@ -276,6 +276,17 @@ public class FourDVPlayer : MonoBehaviour
 
     Vector3[] DepthSamples(GaussianSplat4DSource src)
     {
+        var local = LocalSamples(src);
+        if (local == null) return null;
+        var m = src.transform.localToWorldMatrix;
+        var world = new Vector3[local.Length];
+        for (int i = 0; i < local.Length; i++) world[i] = m.MultiplyPoint3x4(local[i]);
+        return world;
+    }
+
+    // The same chunk centres in the clip's own space (FourDVAR finds the performer from them).
+    public Vector3[] LocalSamples(GaussianSplat4DSource src)
+    {
         string name = src.GSplat4DAsset.name;
         if (!m_DepthCache.TryGetValue(name, out var local))
         {
@@ -302,11 +313,7 @@ public class FourDVPlayer : MonoBehaviour
             catch (System.Exception e) { Debug.LogWarning($"[4DV] {name}: no depth samples ({e.Message})"); }
             m_DepthCache[name] = local;
         }
-        if (local == null) return null;
-        var m = src.transform.localToWorldMatrix;
-        var world = new Vector3[local.Length];
-        for (int i = 0; i < local.Length; i++) world[i] = m.MultiplyPoint3x4(local[i]);
-        return world;
+        return local;
     }
 
     public void Next() => Select(m_Index + 1);

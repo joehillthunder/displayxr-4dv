@@ -364,6 +364,8 @@ public static class FourDVSetup
             var ar = pivot.AddComponent<FourDVAR>();
             ar.orbit = orbit;
             ar.backgroundMaterial = arMat;
+            ar.cropShader = AssetDatabase.LoadAssetAtPath<ComputeShader>("Assets/Shaders/FourDVCrop.compute");
+            if (ar.cropShader == null) Fail("Assets/Shaders/FourDVCrop.compute not found");
         }
         else
         {

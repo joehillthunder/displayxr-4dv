@@ -393,6 +393,7 @@ public class FourDVOrbit : MonoBehaviour
     // that starts on the panel belongs to the panel.
     void UpdateTouch()
     {
+        if (ArMode) return;   // FourDVAR handles touch in AR (place, move, scale)
         var ts = Touchscreen.current;
         if (ts == null) return;
         int n = 0;
@@ -496,6 +497,17 @@ public class FourDVOrbit : MonoBehaviour
 #if UNITY_ANDROID && !UNITY_EDITOR
         if (!m_TouchPassThrough && Time.frameCount % 60 == 0 && m_TouchTries++ < 30) PassTouchesThroughRuntimeWindow();
 #endif
+        if (ArMode && DisplayXRAndroidFeature.ViewRigActive && xrCamera != null)
+        {
+            // AR: FourDVAR poses the XR space (the rear camera, gravity-aligned) and the clip; the camera rig
+            // gives real-metre eyes, so 4DV culls from the camera itself.
+            xrCamera.transform.localPosition = Vector3.zero;
+            xrCamera.transform.localRotation = Quaternion.identity;
+            xrCamera.ResetWorldToCameraMatrix();
+            xrCamera.nearClipPlane = 0.02f;
+            xrCamera.farClipPlane = 100f;
+            return;
+        }
         GetViewGeometry(out _, out _, out float viewer, out float spm);
         UpdateDepthFit();
         var t = xrSpace;

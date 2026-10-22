@@ -1,0 +1,100 @@
+// FourDV AR crop: 4DV's per-clip FX setup pass (copied from the plugin's GSFX/FXExample_01_Twist.compute,
+// which is the documented template), keeping only a cylinder around the performer. Used by FourDVAR.
+#define GROUP_SIZE 256
+
+#pragma kernel CSSetupSplatDataPool
+
+#pragma multi_compile _ UNITY_STEREO_INSTANCING_ENABLED
+#pragma multi_compile_local _ SH_0 SH_1 SH_2 SH_3
+#pragma multi_compile_local _ IS_COMPRESSED
+// // For stereo instancing support
+// #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+ByteAddressBuffer _CurrentVertexDataBuffer;
+ByteAddressBuffer _CurrentChunkDataBuffer;
+ByteAddressBuffer _CurrentSHDataBuffer;
+
+#include "Packages/com.4dv.4d-gaussian-splatting/Runtime/Shader/GaussianSplat4D.hlsl"
+#include "UnityCG.cginc"
+
+float4x4 _MatrixObjectToWorld;
+float4x4 _MatrixWorldToObject;
+float4x4 _MatrixV;
+float4x4 _MatrixInvV;
+float4 _VecWorldSpaceCameraPos;
+float3 _VecScale;
+float _CurrentTime;
+float _CurrentProgressTime;
+float _SplatSize;
+float _CutoffSigma;
+float _Transparency;
+int _SHOrder;
+
+// StructuredBuffer<SplatData> _CurrentSplatDataBuffer;
+RWStructuredBuffer<PooledSplatData> _SplatDataPool;
+RWStructuredBuffer<int> _SplatSourceIDBuffer;
+float _CurrentTimeScale;
+int _CurrentSplatCount;
+int _CurrentPoolOffset;
+int _CurrentSplatSourceIndex;
+int _CurrentSplatSourceDensityLOD;
+
+// AR crop (FourDVAR): keep a vertical cylinder around the performer, in the clip's local space (y up, the
+// capture floor at y = 0): xy = centre (x, z), z = radius; height range in _CropHeight. Everything else
+// (stands, walls, the rest of the stage) gets no size and no opacity.
+float4 _CropCylinder;
+float4 _CropHeight;
+
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void CSSetupSplatDataPool (uint3 id : SV_DispatchThreadID)
+{
+    uint idx = id.x;
+    if (idx >= _CurrentSplatCount) return;
+
+    SplatData splat = (SplatData)0;
+    #if defined(IS_COMPRESSED)
+    UnpackChunk(idx << _CurrentSplatSourceDensityLOD, splat);
+    UnpackSH(idx << _CurrentSplatSourceDensityLOD, _SHOrder, splat);
+    #else
+    splatSet(idx << _CurrentSplatSourceDensityLOD, _SHOrder, splat);
+    #endif
+
+    // SplatData splat = _CurrentSplatDataBuffer[idx << _CurrentSplatSourceDensityLOD];
+
+    PooledSplatSetupInfo setupInfo;
+    setupInfo.matO2W = _MatrixObjectToWorld;
+    setupInfo.matW2O = _MatrixWorldToObject;
+    setupInfo.matV = _MatrixV;
+    setupInfo.matInvV = _MatrixInvV;
+    setupInfo.camPosWorld = _VecWorldSpaceCameraPos;
+    setupInfo.objScale = _VecScale;
+    setupInfo.currentTime = _CurrentTime;
+    // -------- DON'T TOUCH ANYTHING ABOVE UNLESS YOU KNOW WHAT YOU ARE DOING --------
+
+    // Uncomment below if you want to use splat's world position.
+    // float3 worldPosition = mul(_MatrixObjectToWorld, float4(splat.pos, 1.0)).xyz;
+
+    // And don't forget to get modified world space position back to local space position if you want to apply the postion change to each splat.
+    // float3 localPosition = mul(_MatrixWorldToObject, float4(worldPosition, 1.0)).xyz;
+
+    // Below are attributes for each splat, you must setup all of them.
+    // The splat's final output color is: setupInfo.tintColor * lerp(setupInfo.color, splatColor, setupInfo.splatColorPower).rgb
+    float2 d = splat.pos.xz - _CropCylinder.xy;
+    bool keep = dot(d, d) <= _CropCylinder.z * _CropCylinder.z &&
+                splat.pos.y >= _CropHeight.x && splat.pos.y <= _CropHeight.y;
+    setupInfo.localPosition = splat.pos;
+    setupInfo.splatSize = keep ? _SplatSize : 0.0;
+    setupInfo.cutoffSigma = _CutoffSigma;
+    setupInfo.tScale = _CurrentTimeScale;
+    setupInfo.color = float4(1.0, 1.0, 1.0, 1.0);
+    setupInfo.tintColor = float4(1.0, 1.0, 1.0, 1.0);
+    setupInfo.splatColorPower = 1.0;
+    setupInfo.transparency = keep ? _Transparency : 0.0;
+
+    // -------- DON'T TOUCH ANYTHING BELOW UNLESS YOU KNOW WHAT YOU ARE DOING --------
+    PooledSplatData pooledSplat = SetupPooledSplat(splat, setupInfo);
+
+    _SplatDataPool[_CurrentPoolOffset + idx] = pooledSplat;
+    _SplatSourceIDBuffer[_CurrentPoolOffset + idx] = _CurrentSplatSourceIndex;
+}

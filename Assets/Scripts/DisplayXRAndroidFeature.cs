@@ -36,10 +36,15 @@ public class DisplayXRAndroidFeature : OpenXRFeature
     public const string FeatureId = "com.displayxrdemos.fourdv.displayxr-android";
     public const string ViewRigExtension = "XR_DXR_view_rig";
     const int XR_TYPE_DISPLAY_RIG_DXR = 1004999140;
+    const int XR_TYPE_CAMERA_RIG_DXR = 1004999141;
 
     // Display rig, set by FourDVOrbit each frame (read on whichever thread Unity locates views).
     public static volatile float Height = 1f;
     public static volatile float IpdFactor = 1f;
+    // AR (FourDVAR): a camera rig instead, matching the rear camera, so virtual objects line up with its image.
+    public static volatile bool CameraRig;
+    public static volatile float VerticalFov = 0.8f;        // radians
+    public static volatile float ConvergenceDiopters;       // 1 / distance (m) to the object kept at screen depth
     public static bool ViewRigActive { get; private set; }
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -68,13 +73,28 @@ public class DisplayXRAndroidFeature : OpenXRFeature
         {
             var zero = new byte[64];
             Marshal.Copy(zero, 0, rig, 64);
-            Marshal.WriteInt32(rig, 0, XR_TYPE_DISPLAY_RIG_DXR);
             Marshal.WriteIntPtr(rig, 8, Marshal.ReadIntPtr(viewLocateInfo, 8));
             WriteFloat(rig, 28, 1f);                                   // orientation w (identity)
-            WriteFloat(rig, 44, Mathf.Max(Height, 1e-3f));
-            WriteFloat(rig, 48, Mathf.Clamp01(IpdFactor));
-            WriteFloat(rig, 52, 1f);                                   // parallaxFactor
-            WriteFloat(rig, 56, 1f);                                   // perspectiveFactor
+            if (CameraRig)
+            {
+                // XrCameraRigDXR: ipdFactor (absolute), parallaxFactor (absolute; 0 = no look-around, which
+                // would slide the object across the flat camera image), convergenceDiopters, verticalFov,
+                // metersToVirtual.
+                Marshal.WriteInt32(rig, 0, XR_TYPE_CAMERA_RIG_DXR);
+                WriteFloat(rig, 44, Mathf.Max(IpdFactor, 0f));
+                WriteFloat(rig, 48, 0f);
+                WriteFloat(rig, 52, Mathf.Max(ConvergenceDiopters, 0f));
+                WriteFloat(rig, 56, Mathf.Clamp(VerticalFov, 0.1f, 2.5f));
+                WriteFloat(rig, 60, 1f);
+            }
+            else
+            {
+                Marshal.WriteInt32(rig, 0, XR_TYPE_DISPLAY_RIG_DXR);
+                WriteFloat(rig, 44, Mathf.Max(Height, 1e-3f));
+                WriteFloat(rig, 48, Mathf.Clamp01(IpdFactor));
+                WriteFloat(rig, 52, 1f);                               // parallaxFactor
+                WriteFloat(rig, 56, 1f);                               // perspectiveFactor
+            }
             Marshal.WriteIntPtr(info, 8, rig);
             return s_NextLocateViews(session, info, viewState, capacity, countOutput, views);
         }
