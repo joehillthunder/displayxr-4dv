@@ -18,9 +18,11 @@ using UnityEngine.InputSystem;
 //   double tap re-place it in front, at the screen centre
 //
 // DisplayXR renders through a camera rig matching the rear camera's field of view (DisplayXRAndroidFeature),
-// so the figure lines up with the camera image, which is a quad far behind it. Convergence sits on the figure,
-// so it appears at screen depth with the room behind. Face tracking keeps the front camera; this opens the
-// rear one. Without DisplayXR's view rig (Windows, older runtimes) AR keeps its earlier gyro-only behaviour.
+// so the figure lines up with the camera image. The runtime's window sits over the app's and blends by alpha,
+// so the camera image goes in the app's own window (a full-screen UI image under the panel, flat at screen
+// depth) and the XR view clears to transparent: the woven figure lands over the room and the panel stays
+// visible. Convergence sits on the figure, at screen depth too. Face tracking keeps the front camera; this
+// opens the rear one. Without DisplayXR's view rig (Windows, older runtimes) AR keeps its earlier gyro-only behaviour.
 public class FourDVAR : MonoBehaviour
 {
     public FourDVOrbit orbit;
@@ -44,6 +46,9 @@ public class FourDVAR : MonoBehaviour
     bool m_HaveRef;
     Vector3 m_Gravity, m_GravityRef;
     float m_VFov = 45f * Mathf.Deg2Rad, m_HFov = 70f * Mathf.Deg2Rad;
+
+    UnityEngine.UI.RawImage m_Overlay;
+    Color m_Background;
 
     // world placement
     Transform m_Clips;
@@ -125,6 +130,13 @@ public class FourDVAR : MonoBehaviour
             m_ClipsRot = m_Clips.rotation;
             m_ClipsScale = m_Clips.localScale;
             DisplayXRAndroidFeature.CameraRig = true;
+            m_Quad.SetActive(false);
+            CreateOverlay();
+            if (orbit.xrCamera != null)
+            {
+                m_Background = orbit.xrCamera.backgroundColor;
+                orbit.xrCamera.backgroundColor = new Color(0f, 0f, 0f, 0f);
+            }
         }
         m_HaveRef = false;
         m_Placed = false;
@@ -154,6 +166,7 @@ public class FourDVAR : MonoBehaviour
             m_Clips = null;
         }
         SetCrop(null);
+        if (m_Overlay != null) { Destroy(m_Overlay.canvas.gameObject); m_Overlay = null; if (orbit != null && orbit.xrCamera != null) orbit.xrCamera.backgroundColor = m_Background; }
         if (orbit != null) { orbit.ArMode = false; orbit.ArTurn = Quaternion.identity; }
         if (m_Cam != null) { m_Cam.Stop(); Destroy(m_Cam); m_Cam = null; }
         if (m_Quad != null) { Destroy(m_Quad); m_Quad = null; }
@@ -210,19 +223,28 @@ public class FourDVAR : MonoBehaviour
         DisplayXRAndroidFeature.IpdFactor = orbit.Is3D ? orbit.Strength : 0f;
         Status = $"Size {FigureScale * 100f:0}% · surface {SurfaceDrop * 100f:0} cm below";
 
-        // Camera image: a quad filling the rear camera's field of view, far behind the figure.
-        float h = 2f * backgroundDistance * Mathf.Tan(m_VFov * 0.5f);
-        float w = 2f * backgroundDistance * Mathf.Tan(m_HFov * 0.5f);
-        var t = m_Quad.transform;
-        if (t.parent != cam) t.SetParent(cam, false);
-        int angle = m_Cam.videoRotationAngle;
-        bool sideways = angle % 180 != 0;
-        t.localPosition = new Vector3(0f, 0f, backgroundDistance);
-        t.localRotation = Quaternion.Euler(0f, 0f, -angle);
-        t.localScale = sideways ? new Vector3(h, w, 1f) : new Vector3(w, h, 1f);
+        // Camera image (app window, under the panel): fill the screen's height, crop the sides, so its
+        // vertical field of view is the rig's.
+        float screenAspect = (float)Screen.width / Mathf.Max(Screen.height, 1);
+        float camAspect = Mathf.Tan(m_HFov * 0.5f) / Mathf.Tan(m_VFov * 0.5f);
+        float u = Mathf.Clamp01(screenAspect / camAspect);
+        bool flip180 = m_Cam.videoRotationAngle == 180;
         bool flipY = m_Cam.videoVerticallyMirrored;
-        m_Mat.mainTextureScale = new Vector2(1f, flipY ? -1f : 1f);
-        m_Mat.mainTextureOffset = new Vector2(0f, flipY ? 1f : 0f);
+        var rect = new Rect((1f - u) * 0.5f, 0f, u, 1f);
+        if (flip180) rect = new Rect(rect.xMax, 1f, -rect.width, -1f);
+        if (flipY) rect = new Rect(rect.x, rect.y + rect.height, rect.width, -rect.height);
+        m_Overlay.uvRect = rect;
+    }
+
+    void CreateOverlay()
+    {
+        var go = new GameObject("AR Camera Image", typeof(RectTransform), typeof(Canvas), typeof(UnityEngine.UI.RawImage));
+        var canvas = go.GetComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.sortingOrder = -50;   // under the panel (0) and toolbar (1)
+        m_Overlay = go.GetComponent<UnityEngine.UI.RawImage>();
+        m_Overlay.texture = m_Cam;
+        m_Overlay.raycastTarget = false;
     }
 
     // Tablet orientation in a y-up world: Android's rotation vector is device-to-earth (x east, y north, z up)
