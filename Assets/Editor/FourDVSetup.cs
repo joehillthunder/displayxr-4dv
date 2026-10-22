@@ -154,6 +154,9 @@ public static class FourDVSetup
         PlayerSettings.allowedAutorotateToLandscapeRight = true;
         PlayerSettings.allowedAutorotateToPortrait = false;
         PlayerSettings.allowedAutorotateToPortraitUpsideDown = false;
+        // Edge to edge: no status or navigation bar over the clip.
+        PlayerSettings.Android.startInFullscreen = true;
+        PlayerSettings.Android.renderOutsideSafeArea = true;
     }
 
     static string ArgValue(string name)
@@ -365,6 +368,18 @@ public static class FourDVSetup
             head.nearClipPlane = 0.05f;
             head.farClipPlane = 1000f;
             orbit.leia = leia;
+
+            // AR: rear-camera image behind the clip, gyroscope placement (FourDVAR).
+            const string kArMaterialPath = "Assets/Settings/AR-CameraImage.mat";
+            var arMat = AssetDatabase.LoadAssetAtPath<Material>(kArMaterialPath);
+            if (arMat == null)
+            {
+                arMat = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
+                AssetDatabase.CreateAsset(arMat, kArMaterialPath);
+            }
+            var ar = pivot.AddComponent<FourDVAR>();
+            ar.orbit = orbit;
+            ar.backgroundMaterial = arMat;
 #endif
         }
         else

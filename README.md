@@ -24,7 +24,8 @@ fits, the same rule as the web player, but never below 25% of natural depth. Clo
 keep full depth. Scenes that surround the performer (Badminton, Horse Walk, Rocket, Lang Lang) drop to 25–45%.
 3D strength multiplies on top: 1 = the fitted depth, 2 = double it, 0 = flat. The sidebar shows the fit,
 e.g. `1.00x · fit 25%`. Anything more than 20 cm in front of the screen is clipped. Those splats are strays
-around the capture rig, at the viewer's eye position.
+around the capture rig, at the viewer's eye position. **Fit: off** (sidebar) turns the budget off and gives
+every clip its natural depth, times the strength (up to 3x).
 
 | Input | Action |
 |---|---|
@@ -95,7 +96,19 @@ It isn't drawn by this app. `Player.log` logs `[4DV] Eye tracking ON/OFF` and sa
 
 The same app runs on Leia's Android tablets through Leia's own Unity plugin. The tablets' face tracking and
 weaving are built in, so there's nothing to install on them except the app. Touch controls: one finger orbits,
-pinch zooms, two fingers pan, and a double tap resets the view. **Menu** (top right) shows and hides the sidebar.
+pinch zooms, two fingers pan, and a double tap resets the view. The toolbar (top right) stays on screen:
+
+| Button | Action |
+|---|---|
+| Depth − / + | 3D strength in steps of 0.25, 0 (flat) to 3x; the readout below shows the depth in use |
+| Fit | On: depth is capped to what the panel shows cleanly (the depth budget). Off: natural depth × strength, even where edges double |
+| AR | The rear camera's live image behind the clip; the clip stays put in the room as you turn the tablet. Double tap re-places it in front of you |
+| Menu / Hide | The sidebar; hidden, the clip fills the screen (the app runs edge to edge, without status or navigation bars) |
+
+AR tracks turning only (3 degrees of freedom, from the gyroscope), not walking around. Full 6DoF would need
+ARCore, which doesn't list the Nubia Pad 3D II or RedMagic 3D Explorer, and Unity's ARCore plug-in only
+renders with Vulkan (which 4DV needs) from AR Foundation 6.1 on Unity 6. The camera image is mono, shown
+behind the screen, and the clip is in stereo in front of it. Leia's face tracking keeps the front camera.
 It ships five lighter clips: Dance, Cat, Kat Miche, Tim Talk and Dance 2, about 1 GB. If a clip can't hold
 27 fps, the app draws every other splat, and then every fourth if needed.
 
@@ -181,7 +194,8 @@ release zip.
 | `Packages/manifest.json` | Pins `com.displayxr.unity` to `upm/v2.26.0` and URP 14.0.12 |
 | `Assets/Scripts/FourDVPlayer.cs` | Playlist, loop modes, seeking, speed, synced audio, per-clip framing |
 | `Assets/Scripts/FourDVOrbit.cs` | Display-centric DisplayXR rig: orbit, pan, zoom, 3D strength, 2D/3D, windowed sizing |
-| `Assets/Scripts/FourDVPanel.cs` | Sidebar UI; a DisplayXR window-space layer in 3D, a screen overlay in 2D |
+| `Assets/Scripts/FourDVPanel.cs` | Sidebar UI; a DisplayXR window-space layer in 3D, a screen overlay in 2D; tablet toolbar |
+| `Assets/Scripts/FourDVAR.cs` | Android AR view: rear-camera image behind the clip, gyroscope placement |
 | `Assets/Editor/FourDVImport.cs` | Batch `.4dv` import through 4DV's own importer, plus audio and view sidecars |
 | `Assets/Editor/FourDVSetup.cs` | Headless project setup, Windows build, Android prepare and build |
 | `Tools/push-android-clips.ps1` | Installs the APK on a tablet and copies clip data to it over USB |

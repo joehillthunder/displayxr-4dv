@@ -45,10 +45,18 @@ public class FourDVOrbit : MonoBehaviour
     public float zoomStep = 0.12f;          // fraction per wheel notch
     public float autoTurnSpeed = 12f;       // degrees per second
 
-    public const float MaxStrength = 2f;
-    public float Strength { get; set; } = 1f;   // times DepthFit = DisplayXRDisplay.ipdFactor: 0 = flat, 2 = exaggerated
+    public const float MaxStrength = 3f;
+    public float Strength { get; set; } = 1f;   // times DepthFit = DisplayXRDisplay.ipdFactor: 0 = flat, 3 = exaggerated
     public bool Is3D { get; private set; } = true;
     public bool AutoTurn { get; set; }
+    // Off: natural depth for every clip (Strength alone), even where the panel shows double edges.
+    public bool FitDepth { get; set; } = true;
+
+    // AR (FourDVAR): the screen turns about the viewer's eyes by ArTurn, the tablet's own turn since the clip
+    // was placed, so the clip stays put in the room while the camera image behind it moves with the tablet.
+    public bool ArMode { get; set; }
+    public Quaternion ArTurn { get; set; } = Quaternion.identity;
+    public event Action ViewReset;
 
     // Stereo depth budget (same rule as the web player): the largest screen disparity, as a fraction of the
     // panel's width, that the 5th- and 95th-percentile depths in view may reach at Strength 1. Past about 1%
@@ -154,6 +162,7 @@ public class FourDVOrbit : MonoBehaviour
         m_Pitch = m_HomePitch;
         displayHeight = m_HomeHeight;
         Apply();
+        ViewReset?.Invoke();
     }
 
     // ---- 3D controls (keyboard and FourDVPanel) ----
@@ -188,7 +197,7 @@ public class FourDVOrbit : MonoBehaviour
             }
             Debug.Log($"[4DV-DBG] content p10/median/p90 x {Axis(0)} y {Axis(1)} z {Axis(2)}");
         }
-        DepthFit = m_DepthTarget = MeasureDepthFit();
+        DepthFit = m_DepthTarget = FitDepth ? MeasureDepthFit() : 1f;
     }
 
     // How much of the scene's natural depth fits the budget from the current view, re-measured four times a
@@ -198,7 +207,7 @@ public class FourDVOrbit : MonoBehaviour
         if (UnityEngine.Time.unscaledTime >= m_NextDepthCheck)
         {
             m_NextDepthCheck = UnityEngine.Time.unscaledTime + 0.25f;
-            m_DepthTarget = MeasureDepthFit();
+            m_DepthTarget = FitDepth ? MeasureDepthFit() : 1f;
         }
         DepthFit = Mathf.MoveTowards(DepthFit, m_DepthTarget, UnityEngine.Time.unscaledDeltaTime);
     }
@@ -466,6 +475,14 @@ public class FourDVOrbit : MonoBehaviour
         var t = leia.transform;
         t.localPosition = Vector3.zero;
         t.localRotation = Quaternion.identity;
+        if (ArMode)
+        {
+            // Turn the screen about the nominal eye point (viewer metres in front of it), not the pivot.
+            GetViewGeometry(out _, out _, out float viewer, out float spm);
+            var eye = new Vector3(0f, 0f, -viewer * spm);
+            t.localRotation = ArTurn;
+            t.localPosition = eye - ArTurn * eye;
+        }
         leia.VirtualHeight = displayHeight;
         UpdateDepthFit();
         leia.DepthFactor = Strength * DepthFit;
@@ -499,6 +516,26 @@ public class FourDVOrbit : MonoBehaviour
         return true;
     }
 #endif
+
+    // The virtual screen (what the woven image shows): Leia's display on Android, DisplayXR's elsewhere.
+    public Transform ScreenTransform
+    {
+        get
+        {
+#if FOURDV_LEIA
+            if (leia != null) return leia.transform;
+#endif
+            return display != null ? display.transform : null;
+        }
+    }
+
+    // Physical size of the woven area (metres), the viewing distance (metres) and scene units per metre at
+    // the screen.
+    public void GetViewGeometry(out float physW, out float physH, out float viewer, out float scenePerMetre)
+    {
+        PanelGeometry(out _, out physW, out physH, out viewer);
+        scenePerMetre = Mathf.Max(displayHeight, 1e-3f) / physH;
+    }
 
     public static bool ProviderActive()
     {

@@ -38,7 +38,7 @@ public class FourDVPanel : MonoBehaviour
     bool m_Visible = System.Array.IndexOf(System.Environment.GetCommandLineArgs(), "-4dv-kiosk") < 0;
 
     readonly List<(Button button, Text label)> m_ClipRows = new List<(Button, Text)>();
-    Text m_Now, m_TimeText, m_PlayLabel, m_LoopLabel, m_SpeedLabel, m_3DLabel, m_StrengthValue;
+    Text m_Now, m_TimeText, m_PlayLabel, m_LoopLabel, m_SpeedLabel, m_FitLabel, m_3DLabel, m_StrengthValue;
     Slider m_Progress, m_Strength;
     bool m_SettingProgress, m_ScrubWasPaused, m_Scrubbing;
 
@@ -118,6 +118,7 @@ public class FourDVPanel : MonoBehaviour
         var row2 = Row(root.transform, 88);
         m_LoopLabel = MakeButton(row2, "", 34, player.CycleLoop, 88).label;
         m_SpeedLabel = MakeButton(row2, "", 34, player.CycleSpeed, 88).label;
+        m_FitLabel = MakeButton(row2, "", 34, () => orbit.FitDepth = !orbit.FitDepth, 88).label;
 
         Spacer(root.transform, 6);
         Height(Label(root.transform, "3D", 30, FontStyle.Bold, kMuted).gameObject, 40);
@@ -142,15 +143,18 @@ public class FourDVPanel : MonoBehaviour
 
         PlaceFor2D();
         m_CanvasGO.SetActive(m_Visible);
-        if (Application.isMobilePlatform) BuildMenuButton();
+        if (Application.isMobilePlatform) BuildToolbar();
     }
 
-    // Tablets have no H key: a button in the top-right corner shows and hides the sidebar.
-    Text m_MenuLabel;
+    // Tablets have no keyboard: a toolbar in the top-right corner, always on screen, with depth, AR and the
+    // sidebar toggle. With the sidebar hidden the clip fills the screen.
+    Text m_MenuLabel, m_ArLabel, m_ToolFitLabel, m_Status;
+    FourDVAR m_Ar;
 
-    void BuildMenuButton()
+    void BuildToolbar()
     {
-        var go = new GameObject("4DV Menu", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+        m_Ar = FindAnyObjectByType<FourDVAR>();
+        var go = new GameObject("4DV Toolbar", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
         go.transform.SetParent(transform, false);
         go.layer = LayerMask.NameToLayer("UI");
         var canvas = go.GetComponent<Canvas>();
@@ -160,12 +164,49 @@ public class FourDVPanel : MonoBehaviour
         scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         scaler.referenceResolution = new Vector2(kRtW / kW, kRtH / kH);
         scaler.matchWidthOrHeight = 1f;
-        var (button, label) = MakeButton(go.transform, "", 36, ToggleVisible, 88);
-        var rt = button.GetComponent<RectTransform>();
+
+        var bar = UI("Bar", go.transform);
+        var rt = bar.GetComponent<RectTransform>();
         rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(1, 1);
-        rt.sizeDelta = new Vector2(200, 88);
         rt.anchoredPosition = new Vector2(-24, -24);
-        m_MenuLabel = label;
+        var hl = bar.AddComponent<HorizontalLayoutGroup>();
+        hl.spacing = 12; hl.childControlWidth = true; hl.childControlHeight = true;
+        hl.childForceExpandWidth = false; hl.childForceExpandHeight = true;
+        void Tool(string text, System.Action onClick, out Text label)
+        {
+            var (b, l) = MakeButton(bar.transform, text, 36, onClick, 88);
+            var le = b.GetComponent<LayoutElement>();
+            le.preferredWidth = le.minWidth = 170;
+            label = l;
+        }
+        Tool("Depth -", () => orbit.StepStrength(-0.25f), out _);
+        Tool("Depth +", () => orbit.StepStrength(+0.25f), out _);
+        Tool("", () => orbit.FitDepth = !orbit.FitDepth, out m_ToolFitLabel);
+        if (m_Ar != null) Tool("AR", m_Ar.Toggle, out m_ArLabel);
+        Tool("", ToggleVisible, out m_MenuLabel);
+        int count = m_Ar != null ? 5 : 4;
+        rt.sizeDelta = new Vector2(count * 170 + (count - 1) * 12, 88);
+
+        m_Status = Label(go.transform, "", 34, FontStyle.Bold, kText);
+        m_Status.alignment = TextAnchor.UpperRight;
+        var srt = m_Status.GetComponent<RectTransform>();
+        srt.anchorMin = srt.anchorMax = srt.pivot = new Vector2(1, 1);
+        srt.anchoredPosition = new Vector2(-24, -124);
+        srt.sizeDelta = new Vector2(900, 50);
+    }
+
+    void RefreshToolbar()
+    {
+        if (m_MenuLabel == null) return;
+        m_MenuLabel.text = m_Visible ? "Hide" : "Menu";
+        m_ToolFitLabel.text = orbit.FitDepth ? "Fit: on" : "Fit: off";
+        string depth = $"Depth {orbit.Strength * orbit.DepthFit:0.00}x";
+        if (m_Ar != null)
+        {
+            m_ArLabel.text = m_Ar.Active ? "AR: on" : "AR";
+            if (m_Ar.Starting || m_Ar.Status.Length > 0) depth = m_Ar.Status;
+        }
+        m_Status.text = depth;
     }
 
     void ToggleVisible()
@@ -182,7 +223,7 @@ public class FourDVPanel : MonoBehaviour
         if (m_CanvasGO == null) return;
         var kb = Keyboard.current;
         if (kb != null && kb.hKey.wasPressedThisFrame) ToggleVisible();
-        if (m_MenuLabel != null) m_MenuLabel.text = m_Visible ? "Hide" : "Menu";
+        RefreshToolbar();
 
         // switch to the window-space layer once DisplayXR is driving the display
         if (m_Wsui == null && FourDVOrbit.ProviderActive()) AttachWindowSpaceLayer();
@@ -217,6 +258,7 @@ public class FourDVPanel : MonoBehaviour
             _ => "Play once",
         };
         m_SpeedLabel.text = $"Speed {player.playbackSpeed:0.##}x";
+        m_FitLabel.text = orbit.FitDepth ? "Fit: on" : "Fit: off";
         m_3DLabel.text = orbit.Is3D ? "3D: on" : "3D: off";
         if (!Mathf.Approximately(m_Strength.value, orbit.Strength)) m_Strength.SetValueWithoutNotify(orbit.Strength);
         m_StrengthValue.text = orbit.DepthFit < 0.995f ? $"{orbit.Strength:0.00}x · fit {orbit.DepthFit * 100f:0}%" : $"{orbit.Strength:0.00}x";
