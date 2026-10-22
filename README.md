@@ -94,56 +94,70 @@ It isn't drawn by this app. `Player.log` logs `[4DV] Eye tracking ON/OFF` and sa
 
 ## Android (Nubia Pad 3D II, RedMagic 3D Explorer)
 
-The same app runs on Leia's Android tablets through Leia's own Unity plugin. The tablets' face tracking and
-weaving are built in, so there's nothing to install on them except the app. Touch controls: one finger orbits,
-pinch zooms, two fingers pan, and a double tap resets the view. The toolbar (top right) stays on screen:
+The same app runs on Leia's Android tablets through **DisplayXR's Android runtime**, which is an OpenXR
+runtime there (`org.freedesktop.monado.openxr_runtime.out_of_process`, installed by DisplayXR's
+`install-android.sh`). The app reaches it through Unity's OpenXR plug-in and the Khronos loader. The runtime
+does the face tracking and the weave, as on Windows. Touch controls: one finger orbits, pinch zooms, two
+fingers pan, and a double tap resets the view. The toolbar (top right) stays on screen:
 
 | Button | Action |
 |---|---|
-| Depth − / + | 3D strength in steps of 0.25, 0 (flat) to 3x; the readout below shows the depth in use |
-| Fit | On: depth is capped to what the panel shows cleanly (the depth budget). Off: natural depth × strength, even where edges double |
+| Depth − / + | 3D strength in steps of 0.25 (0 = flat, 1 = full; DisplayXR caps the eye spread at 1 on Android) |
+| Fit | On: depth is capped to what the panel shows cleanly (the depth budget). Off: natural depth × strength |
 | AR | The rear camera's live image behind the clip; the clip stays put in the room as you turn the tablet. Double tap re-places it in front of you |
-| Menu / Hide | The sidebar; hidden, the clip fills the screen (the app runs edge to edge, without status or navigation bars) |
+| Menu / Hide | The sidebar |
 
 AR tracks turning only (3 degrees of freedom, from the gyroscope), not walking around. Full 6DoF would need
-ARCore, which doesn't list the Nubia Pad 3D II or RedMagic 3D Explorer, and Unity's ARCore plug-in only
-renders with Vulkan (which 4DV needs) from AR Foundation 6.1 on Unity 6. The camera image is mono, shown
-behind the screen, and the clip is in stereo in front of it. Leia's face tracking keeps the front camera.
-It ships five lighter clips: Dance, Cat, Kat Miche, Tim Talk and Dance 2, about 1 GB. If a clip can't hold
-27 fps, the app draws every other splat, and then every fourth if needed.
+ARCore, which doesn't list these tablets, and Unity's ARCore plug-in only renders with Vulkan (which 4DV
+needs) from AR Foundation 6.1 on Unity 6.
 
-Clip data isn't in the APK. It goes on the tablet's app storage over USB:
+It ships five lighter clips: Dance, Cat, Kat Miche, Tim Talk and Dance 2, about 1 GB. Each eye renders at
+1920×1200 (the panel's 3D mode). If a clip can't hold 20 fps, the app draws every other splat.
 
-1. On the tablet, turn on USB debugging (Settings > About, tap Build number 7 times, then Developer options).
-   Connect it and accept "Allow USB debugging?".
-2. `pwsh Tools/push-android-clips.ps1` installs `Builds/Android/4DV-Viewer.apk` and copies the clips from a
-   Windows install's `StreamingAssets/GaussianAssets` (or pass `-Source`).
+**Setting up a tablet:**
 
-Building it needs Unity 2022.3 with Android Build Support, and Leia's Unity plugin (**LeiaUnity 3.3.2**,
-"Unity (Windows + Android)" at [support.immersity.ai/sdk](https://support.immersity.ai/sdk), sign-in needed).
-The plugin is proprietary, so it isn't in git. Its Windows runtime also starts Leia SR weaving on its own,
-which fights DisplayXR, so build Android from a **separate checkout** (e.g. `git worktree add ../4dv-android`),
-never the one used for Windows builds. Keep its path short (like `C:\dev\4dv-android`): package files deep
-in `Library/PackageCache` fail to import past Windows' 260-character path limit.
+1. Turn on USB debugging (Settings > About, tap Build number 7 times, then Developer options). Connect it
+   and accept "Allow USB debugging?".
+2. Install DisplayXR's runtime with its `scripts/install-android.sh` (displayxr-runtime). Use the script, not
+   a bare `adb install`: the runtime app has to be **opened once** after every install, or its OpenXR broker
+   stays unreachable and every OpenXR app fails with `XR_ERROR_RUNTIME_UNAVAILABLE`.
+3. `pwsh Tools/push-android-clips.ps1 [-Serial <adb serial>]` installs `Builds/Android/4DV-Viewer.apk`, starts
+   it once so Android creates its storage folder, and copies the clips there (4DV's plugin reads Android clip
+   data from `persistentDataPath/GaussianAssets/<clip>/`, not from the APK). Pass `-Serial` when adb lists
+   the tablet twice (USB and wireless debugging).
+
+**Building it** needs Unity 2022.3 with Android Build Support. Build from a checkout whose path is short (like
+`C:\devdv-android`: package files deep in `Library/PackageCache` fail to import past Windows' 260-character
+limit) and without `Assets/StreamingAssets/GaussianAssets` (it would go into the APK):
 
 ```bat
-Unity.exe -batchmode -quit -buildTarget Android -projectPath . -executeMethod FourDVSetup.PrepareAndroid -leia-package C:\path\LeiaUnity-3.3.2+454.74e0328.unitypackage -logFile Logs\prepare.log
-Unity.exe -batchmode -quit -buildTarget Android -projectPath . -executeMethod FourDVSetup.BuildAndroid -logFile Logs\android.log
+Unity.exe -batchmode -quit -buildTarget Android -projectPath . -executeMethod FourDVSetup.PrepareAndroid -logFile Logs\prepare.log
+Unity.exe -batchmode -quit -buildTarget Android -projectPath . -executeMethod FourDVSetup.BuildAndroid -logFile Logsndroid.log
 ```
 
-`PrepareAndroid` imports the plugin to `Assets/Leia` and defines `FOURDV_LEIA`, `LEIA_URP_DETECTED` and
-`DISPLAYXR_NO_SPLASH` for Android. `BuildAndroid` makes `Builds/Android/4DV-Viewer.apk`
-(`com.displayxrdemos.fourdvviewer`); `-4dv-clips a,b,c` picks other clips. What differs from Windows:
+`BuildAndroid` makes `Builds/Android/4DV-Viewer.apk` (`com.displayxrdemos.fourdvviewer`); `-4dv-clips a,b,c`
+picks other clips. `adb shell am start -n com.displayxrdemos.fourdvviewer/com.unity3d.player.UnityPlayerActivity
+-e unity "-4dv-debug"` passes command-line flags. What differs from Windows:
 
-- **Leia rig.** A `LeiaDisplay` sits on the orbit pivot in place of `DisplayXRDisplay`. Leia renders two real eye
-  cameras at the tracked eye positions, so 4DV's plugin culls from each eye and the Windows viewpoint fix isn't
-  needed. 3D strength and the depth budget drive `LeiaDisplay.DepthFactor`.
-- **Vulkan only.** Leia recommends OpenGL ES 3, but 4DV's sort needs wave intrinsics, and Unity only compiles
-  those for Vulkan on Android. Leia's interlacer has a Vulkan path. The sort uses 4DV's `_pico` variant,
-  their build for Snapdragon GPUs.
-- **Renderer 1** (`URP-Renderer-Plain`, no splat feature) is for Leia's head and UI-event cameras. Their images
-  are thrown away, and every camera on renderer 0 runs a full splat sort.
-- 4DV's plugin reads Android clip data from `persistentDataPath/GaussianAssets/<clip>/`, not from StreamingAssets.
+- **Vulkan only.** 4DV's sort needs wave intrinsics, which Unity only compiles for Vulkan on Android; the sort
+  uses 4DV's `_pico` variant, their build for Snapdragon GPUs.
+- **`DisplayXRAndroidFeature`** (an OpenXR feature) declares the display rig with `XR_DXR_view_rig`
+  (virtual display height = zoom, eye spread = 3D strength × depth fit), so the runtime returns views in
+  scene units, and works around three things Unity and the runtime (v2.51–2.52) don't agree on: Unity's
+  second `xrCreateVulkanDeviceKHR` passes a queue create info with a garbage `pNext` that the runtime walks
+  and crashes on; the runtime's `xrSetAndroidApplicationThreadKHR` calls a null hook; and without
+  `XR_DXR_display_info` the runtime renders a "legacy" 0.75 view scale.
+- **The XR space** sits on the orbit pivot, in Unity's device (LOCAL) tracking origin, which is where the
+  runtime anchors the rig. The XR camera is the tracked head (Unity adds each eye's offset to it); 4DV culls
+  and sorts from `worldToCameraMatrix`, which `FourDVOrbit` points from half the nominal viewing distance, as
+  on Windows.
+- **Touch.** The runtime shows the woven image in its own in-process window, titled "DisplayXR", over the
+  app's, and it takes every touch; the app marks it not-touchable. With the XR runtime active, Unity's UI
+  canvas is 1920×1200 while touches arrive at 2560×1600, so UGUI's raycaster misses; `FourDVPanel`
+  hit-tests touches against its controls itself.
+
+Leia's own Unity plugin (LeiaUnity 3.3.2) was tried first and dropped: on this tablet its Vulkan path crashed
+in `vkCreateFramebuffer` and, once patched, produced no image, Leia's own sample included.
 
 ## Build it
 
@@ -200,6 +214,8 @@ release zip.
 | `Assets/Editor/FourDVImport.cs` | Batch `.4dv` import through 4DV's own importer, plus audio and view sidecars |
 | `Assets/Editor/FourDVSetup.cs` | Headless project setup, Windows build, Android prepare and build |
 | `Tools/push-android-clips.ps1` | Installs the APK on a tablet and copies clip data to it over USB |
+| `Assets/Scripts/DisplayXRAndroidFeature.cs` | Android OpenXR feature: DisplayXR display rig, runtime workarounds |
+| `Assets/Plugins/Android/DisplayXRClient.androidlib/` | Manifest entries a DisplayXR Android client needs |
 
 ## Credits
 

@@ -39,13 +39,12 @@ clips; this file is what an agent needs on top of it.
 - Converted clip data (`Assets/StreamingAssets/GaussianAssets/`, about 5.5 GB for 14 clips) is **never** committed.
   It ships in release zips (GitHub caps each file at 2 GB, hence `4DV-Viewer-Win64.zip` + `Clips-Pack2/3`).
 - The clips and plugin are © 4DV.ai, shared for this demo. Keep the credit in README and release notes.
-- **Android** (README "Android") uses Leia's Unity plugin, which is proprietary and never committed
-  (`Assets/Leia/` is gitignored). Code for it goes behind `#if FOURDV_LEIA`. Build Android from a separate
-  checkout: `FourDVSetup.Build` refuses to run while `Assets/Leia` exists, because Leia's Windows runtime
-  hooks fight DisplayXR. Don't commit what `PrepareAndroid`/`BuildAndroid` change in that checkout
-  (ProjectSettings defines, the regenerated scene).
-- Android is Vulkan-only (4DV's wave-intrinsic sort), and Leia's head and UI-event cameras must stay on
-  renderer 1 (no splat feature), or every frame sorts and draws the clip three times.
+- **Android** (README "Android") runs through DisplayXR's Android OpenXR runtime via Unity's OpenXR plug-in;
+  `DisplayXRAndroidFeature` declares the display rig and works around runtime crashes. Vulkan only. Build from
+  a short-path checkout without clip data. On the tablet, the DisplayXR runtime app must be opened once after
+  each runtime install, or every OpenXR app gets `XR_ERROR_RUNTIME_UNAVAILABLE`.
+- Testing on the tablet: `adb shell input tap` is too short for the app (it polls touches per frame); use
+  `input swipe x y x y 150`. Screenshots show one unwoven view; ask the user how the 3D looks.
 - Work on a branch and merge through a PR; end commit messages with the Co-Authored-By trailer.
 
 ## Releases and installing on the demo PC
