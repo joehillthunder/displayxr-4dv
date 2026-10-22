@@ -91,6 +91,46 @@ DisplayXR session has no eye tracking, a soft ring with a rotating highlight sho
 It isn't drawn by this app. `Player.log` logs `[4DV] Eye tracking ON/OFF` and samples the eye positions every
 5 s, so tracking can be checked from a normal launch.
 
+## Android (Nubia Pad 3D II, RedMagic 3D Explorer)
+
+The same app runs on Leia's Android tablets through Leia's own Unity plugin. The tablets' face tracking and
+weaving are built in, so there's nothing to install on them except the app. Touch controls: one finger orbits,
+pinch zooms, two fingers pan, and a double tap resets the view. **Menu** (top right) shows and hides the sidebar.
+It ships five lighter clips: Dance, Cat, Kat Miche, Tim Talk and Dance 2, about 1 GB. If a clip can't hold
+27 fps, the app draws every other splat, and then every fourth if needed.
+
+Clip data isn't in the APK. It goes on the tablet's app storage over USB:
+
+1. On the tablet, turn on USB debugging (Settings > About, tap Build number 7 times, then Developer options).
+   Connect it and accept "Allow USB debugging?".
+2. `pwsh Tools/push-android-clips.ps1` installs `Builds/Android/4DV-Viewer.apk` and copies the clips from a
+   Windows install's `StreamingAssets/GaussianAssets` (or pass `-Source`).
+
+Building it needs Unity 2022.3 with Android Build Support, and Leia's Unity plugin (**LeiaUnity 3.3.2**,
+"Unity (Windows + Android)" at [support.immersity.ai/sdk](https://support.immersity.ai/sdk), sign-in needed).
+The plugin is proprietary, so it isn't in git. Its Windows runtime also starts Leia SR weaving on its own,
+which fights DisplayXR, so build Android from a **separate checkout** (e.g. `git worktree add ../4dv-android`),
+never the one used for Windows builds:
+
+```bat
+Unity.exe -batchmode -quit -buildTarget Android -projectPath . -executeMethod FourDVSetup.PrepareAndroid -leia-package C:\path\LeiaUnity-3.3.2+454.74e0328.unitypackage -logFile Logs\prepare.log
+Unity.exe -batchmode -quit -buildTarget Android -projectPath . -executeMethod FourDVSetup.BuildAndroid -logFile Logs\android.log
+```
+
+`PrepareAndroid` imports the plugin to `Assets/Leia` and defines `FOURDV_LEIA`, `LEIA_URP_DETECTED` and
+`DISPLAYXR_NO_SPLASH` for Android. `BuildAndroid` makes `Builds/Android/4DV-Viewer.apk`
+(`com.displayxrdemos.fourdvviewer`); `-4dv-clips a,b,c` picks other clips. What differs from Windows:
+
+- **Leia rig.** A `LeiaDisplay` sits on the orbit pivot in place of `DisplayXRDisplay`. Leia renders two real eye
+  cameras at the tracked eye positions, so 4DV's plugin culls from each eye and the Windows viewpoint fix isn't
+  needed. 3D strength and the depth budget drive `LeiaDisplay.DepthFactor`.
+- **Vulkan only.** Leia recommends OpenGL ES 3, but 4DV's sort needs wave intrinsics, and Unity only compiles
+  those for Vulkan on Android. Leia's interlacer has a Vulkan path. The sort uses 4DV's `_pico` variant,
+  their build for Snapdragon GPUs.
+- **Renderer 1** (`URP-Renderer-Plain`, no splat feature) is for Leia's head and UI-event cameras. Their images
+  are thrown away, and every camera on renderer 0 runs a full splat sort.
+- 4DV's plugin reads Android clip data from `persistentDataPath/GaussianAssets/<clip>/`, not from StreamingAssets.
+
 ## Build it
 
 Needs Unity **2022.3 LTS** (4DV.ai's plugin targets URP 14) and a signed-in Unity Hub.
@@ -143,7 +183,8 @@ release zip.
 | `Assets/Scripts/FourDVOrbit.cs` | Display-centric DisplayXR rig: orbit, pan, zoom, 3D strength, 2D/3D, windowed sizing |
 | `Assets/Scripts/FourDVPanel.cs` | Sidebar UI; a DisplayXR window-space layer in 3D, a screen overlay in 2D |
 | `Assets/Editor/FourDVImport.cs` | Batch `.4dv` import through 4DV's own importer, plus audio and view sidecars |
-| `Assets/Editor/FourDVSetup.cs` | Headless project setup and Windows build |
+| `Assets/Editor/FourDVSetup.cs` | Headless project setup, Windows build, Android prepare and build |
+| `Tools/push-android-clips.ps1` | Installs the APK on a tablet and copies clip data to it over USB |
 
 ## Credits
 

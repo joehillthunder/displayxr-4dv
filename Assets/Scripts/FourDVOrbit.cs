@@ -16,10 +16,23 @@ using UnityEngine.InputSystem;
 // With the DisplayXR provider running, the woven image is shown in a separate window that Unity's Input
 // System doesn't get clicks from, so buttons come from the provider's window (displayxr_get_overlay_pointer)
 // and motion from Raw Input deltas, the same approach as DisplayXR's DefaultInputController sample.
+//
+// Android (FOURDV_LEIA, Nubia Pad / RedMagic 3D): Leia's own display-centric rig replaces DisplayXR:
+//
+//   Orbit Pivot (this)
+//     LeiaDisplay                                  on the pivot; Leia adds Head > LeftEye/RightEye cameras
+//                                                  at the tracked eye positions and weaves their textures
+//
+// Touch:  one finger orbit · pinch zoom · two-finger drag pan · double tap reset view
 public class FourDVOrbit : MonoBehaviour
 {
     public DisplayXRDisplay display;
     public Camera fallbackCamera;
+#if FOURDV_LEIA
+    public LeiaUnity.LeiaDisplay leia;
+#endif
+
+    public static readonly Color Background = new Color(0.02f, 0.03f, 0.05f);
 
     [Header("View")]
     public float displayHeight = 2.0f;      // metres of scene shown top-to-bottom; smaller = zoomed in
@@ -28,6 +41,7 @@ public class FourDVOrbit : MonoBehaviour
 
     [Header("Input")]
     public float orbitSpeed = 0.25f;        // degrees per pixel
+    public float touchOrbitSpeed = 0.15f;   // degrees per pixel of finger travel
     public float zoomStep = 0.12f;          // fraction per wheel notch
     public float autoTurnSpeed = 12f;       // degrees per second
 
@@ -150,6 +164,9 @@ public class FourDVOrbit : MonoBehaviour
     {
         Is3D = on;
         if (ProviderActive()) DisplayXRProvider.RequestDisplayMode(on);
+#if FOURDV_LEIA
+        if (leia != null) leia.Set3DMode(on);
+#endif
     }
 
     public void StepStrength(float delta) => Strength = Mathf.Clamp(Strength + delta, 0f, MaxStrength);
@@ -187,10 +204,22 @@ public class FourDVOrbit : MonoBehaviour
     }
 
     // Physical size of the woven area (the window, scaled from the panel) and the nominal viewing distance.
-    static void PanelGeometry(out float panelW, out float physW, out float physH, out float viewer)
+    void PanelGeometry(out float panelW, out float physW, out float physH, out float viewer)
     {
         panelW = 0.3444f; float panelH = 0.2153f; viewer = 0.6f;
         physW = panelW; physH = panelH;
+#if FOURDV_LEIA
+        if (leia != null)
+        {
+            // Leia reports the panel in its natural orientation; the app runs landscape.
+            float a = leia.WidthMM / 1000f, b = leia.HeightMM / 1000f;
+            bool landscape = Screen.width >= Screen.height;
+            physW = panelW = landscape ? Mathf.Max(a, b) : Mathf.Min(a, b);
+            physH = landscape ? Mathf.Min(a, b) : Mathf.Max(a, b);
+            viewer = Mathf.Max(leia.ViewingDistanceMM / 1000f, 0.1f);
+            return;
+        }
+#endif
         if (DisplayXRProvider.TryGetDisplayInfo(out var info) && info.widthM > 0f && info.heightM > 0f)
         {
             panelW = info.widthM; panelH = info.heightM;
@@ -295,6 +324,7 @@ public class FourDVOrbit : MonoBehaviour
             float perPixel = displayHeight / Mathf.Max(Screen.height, 1);
             transform.position += transform.rotation * new Vector3(-d.x, -d.y, 0f) * perPixel;
         }
+        if (Application.isMobilePlatform) UpdateTouch();
         if (AutoTurn) m_Yaw += autoTurnSpeed * Time.deltaTime;
 
         // zoom
@@ -337,9 +367,71 @@ public class FourDVOrbit : MonoBehaviour
 
     static readonly bool s_Debug = Array.IndexOf(Environment.GetCommandLineArgs(), "-4dv-debug") >= 0;
 
+    // ---- touch (tablet) ----
+
+    int m_PrevTouches;
+    bool m_TouchOnUi;
+    Vector2 m_PinchMid;
+    float m_PinchDist;
+
+    // One finger orbits; two fingers pinch to zoom and drag to pan; a double tap resets the view. A gesture
+    // that starts on the panel belongs to the panel.
+    void UpdateTouch()
+    {
+        var ts = Touchscreen.current;
+        if (ts == null) return;
+        int n = 0;
+        Vector2 p0 = default, p1 = default, d0 = default;
+        foreach (var t in ts.touches)
+        {
+            if (!t.isInProgress) continue;
+            if (n == 0) { p0 = t.position.ReadValue(); d0 = t.delta.ReadValue(); }
+            else if (n == 1) p1 = t.position.ReadValue();
+            n++;
+        }
+        if (n == 0) { m_PrevTouches = 0; m_TouchOnUi = false; return; }
+        if (m_PrevTouches == 0) m_TouchOnUi = TouchOverUi(p0);
+        if (m_TouchOnUi) { m_PrevTouches = n; return; }
+
+        if (ts.primaryTouch.tap.wasPressedThisFrame && ts.primaryTouch.tapCount.ReadValue() >= 2) ResetView();
+        if (n == 1 && m_PrevTouches == 1)
+        {
+            m_Yaw += d0.x * touchOrbitSpeed;
+            m_Pitch = Mathf.Clamp(m_Pitch - d0.y * touchOrbitSpeed, -80f, 80f);
+            if (d0.sqrMagnitude > 0f) AutoTurn = false;
+        }
+        else if (n >= 2)
+        {
+            Vector2 mid = (p0 + p1) * 0.5f;
+            float dist = (p0 - p1).magnitude;
+            if (m_PrevTouches >= 2 && m_PinchDist > 1f)
+            {
+                displayHeight = Mathf.Clamp(displayHeight * m_PinchDist / Mathf.Max(dist, 1f), minHeight, maxHeight);
+                Vector2 dm = mid - m_PinchMid;
+                float perPixel = displayHeight / Mathf.Max(Screen.height, 1);
+                transform.position += transform.rotation * new Vector3(-dm.x, -dm.y, 0f) * perPixel;
+            }
+            m_PinchMid = mid;
+            m_PinchDist = dist;
+        }
+        m_PrevTouches = n;
+    }
+
+    static bool TouchOverUi(Vector2 screenPos)
+    {
+        var es = EventSystem.current;
+        if (es == null) return false;
+        var hits = new System.Collections.Generic.List<RaycastResult>();
+        es.RaycastAll(new PointerEventData(es) { position = screenPos }, hits);
+        return hits.Count > 0;
+    }
+
     void Apply()
     {
         transform.rotation = Quaternion.Euler(m_Pitch, m_Yaw, 0f);
+#if FOURDV_LEIA
+        if (leia != null) { ApplyLeia(); return; }
+#endif
         if (display == null) return;
         display.virtualDisplayHeight = displayHeight;
         UpdateDepthFit();
@@ -362,6 +454,51 @@ public class FourDVOrbit : MonoBehaviour
         t.localPosition = display.TryGetVirtualDisplayPullback(fallbackCamera, out float d, out _)
             ? new Vector3(0f, 0f, -d) : Vector3.zero;
     }
+
+#if FOURDV_LEIA
+    // Leia's eye cameras are real cameras at the tracked eye positions, so 4DV's plugin culls and sorts from
+    // each eye and needs no viewpoint override. Every camera that renders runs 4DV's splat pass, though,
+    // including Leia's head camera (its image is replaced by the woven one) and UI-event camera: those two
+    // use renderer 1, which has no splat feature. Leia copies camera settings to the eyes only once, so the
+    // background and near plane are set here each frame.
+    void ApplyLeia()
+    {
+        var t = leia.transform;
+        t.localPosition = Vector3.zero;
+        t.localRotation = Quaternion.identity;
+        leia.VirtualHeight = displayHeight;
+        UpdateDepthFit();
+        leia.DepthFactor = Strength * DepthFit;
+        if (leia.ViewersHead == null || leia.ViewersHead.eyes == null) return;
+
+        SetupLeiaCamera(leia.HeadCamera, 1);
+        foreach (var c in leia.GetComponentsInChildren<LeiaUnity.LeiaEventCamera>())
+            SetupLeiaCamera(c.GetComponent<Camera>(), 1);
+
+        // Clip anything more than s_MaxPopOut in front of the panel: see ApplyNearClip.
+        PanelGeometry(out _, out _, out float physH, out _);
+        float scenePerMetre = Mathf.Max(displayHeight, 1e-3f) / physH;
+        for (int i = 0; i < leia.ViewersHead.eyes.Count; i++)
+        {
+            var eye = leia.GetEyeCamera(i);
+            if (!SetupLeiaCamera(eye, 0)) continue;
+            float toPanel = Vector3.Dot(t.position - eye.transform.position, t.forward);
+            eye.nearClipPlane = Mathf.Max(0.01f, toPanel - s_MaxPopOut * scenePerMetre);
+            eye.farClipPlane = 1000f;
+        }
+    }
+
+    static bool SetupLeiaCamera(Camera cam, int renderer)
+    {
+        if (cam == null) return false;
+        cam.clearFlags = CameraClearFlags.SolidColor;
+        cam.backgroundColor = Background;
+        var data = cam.GetComponent<UnityEngine.Rendering.Universal.UniversalAdditionalCameraData>();
+        if (data == null) data = cam.gameObject.AddComponent<UnityEngine.Rendering.Universal.UniversalAdditionalCameraData>();
+        data.SetRenderer(renderer);
+        return true;
+    }
+#endif
 
     public static bool ProviderActive()
     {

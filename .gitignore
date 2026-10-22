@@ -14,5 +14,10 @@
 /Assets/StreamingAssets/GaussianAssets/
 /Assets/StreamingAssets/GaussianAssets.meta
 
+# Leia's Unity plugin (proprietary; support.immersity.ai/sdk). Imported only in Android checkouts by
+# FourDVSetup.PrepareAndroid.
+/Assets/Leia/
+/Assets/Leia.meta
+
 # 4DV sample package (45 MB); the same dance clip ships in the release zip
 /Packages/com.4dv.4d-gaussian-splatting/Samples~/

@@ -133,14 +133,46 @@ public class FourDVPanel : MonoBehaviour
         m_StrengthValue.alignment = TextAnchor.MiddleRight;
         m_Strength = MakeSlider(root.transform, 0f, FourDVOrbit.MaxStrength, orbit.Strength, s => orbit.Strength = s);
 
-        var hint = Label(root.transform,
-            "Drag orbit · Right-drag pan · Wheel zoom\nSpace pause · ← → clip · L loop · [ ] strength\nV 2D/3D · F11 fullscreen · H hide panel",
+        var hint = Label(root.transform, Application.isMobilePlatform
+                ? "Drag orbit · Pinch zoom · Two-finger drag pan\nDouble tap reset view · Menu hides this panel"
+                : "Drag orbit · Right-drag pan · Wheel zoom\nSpace pause · ← → clip · L loop · [ ] strength\nV 2D/3D · F11 fullscreen · H hide panel",
             30, FontStyle.Normal, kMuted);
         hint.horizontalOverflow = HorizontalWrapMode.Wrap;
         Height(hint.gameObject, 150);
 
         PlaceFor2D();
         m_CanvasGO.SetActive(m_Visible);
+        if (Application.isMobilePlatform) BuildMenuButton();
+    }
+
+    // Tablets have no H key: a button in the top-right corner shows and hides the sidebar.
+    Text m_MenuLabel;
+
+    void BuildMenuButton()
+    {
+        var go = new GameObject("4DV Menu", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+        go.transform.SetParent(transform, false);
+        go.layer = LayerMask.NameToLayer("UI");
+        var canvas = go.GetComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.sortingOrder = 1;
+        var scaler = go.GetComponent<CanvasScaler>();
+        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+        scaler.referenceResolution = new Vector2(kRtW / kW, kRtH / kH);
+        scaler.matchWidthOrHeight = 1f;
+        var (button, label) = MakeButton(go.transform, "", 36, ToggleVisible, 88);
+        var rt = button.GetComponent<RectTransform>();
+        rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(1, 1);
+        rt.sizeDelta = new Vector2(200, 88);
+        rt.anchoredPosition = new Vector2(-24, -24);
+        m_MenuLabel = label;
+    }
+
+    void ToggleVisible()
+    {
+        m_Visible = !m_Visible;
+        m_CanvasGO.SetActive(m_Visible);
+        if (!m_Visible) DisplayXRWindowSpaceUI.IsCursorOverInteractive = false;
     }
 
     // ---------------------------------------------------------------- per frame
@@ -149,12 +181,8 @@ public class FourDVPanel : MonoBehaviour
     {
         if (m_CanvasGO == null) return;
         var kb = Keyboard.current;
-        if (kb != null && kb.hKey.wasPressedThisFrame)
-        {
-            m_Visible = !m_Visible;
-            m_CanvasGO.SetActive(m_Visible);
-            if (!m_Visible) DisplayXRWindowSpaceUI.IsCursorOverInteractive = false;
-        }
+        if (kb != null && kb.hKey.wasPressedThisFrame) ToggleVisible();
+        if (m_MenuLabel != null) m_MenuLabel.text = m_Visible ? "Hide" : "Menu";
 
         // switch to the window-space layer once DisplayXR is driving the display
         if (m_Wsui == null && FourDVOrbit.ProviderActive()) AttachWindowSpaceLayer();

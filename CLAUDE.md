@@ -39,6 +39,13 @@ clips; this file is what an agent needs on top of it.
 - Converted clip data (`Assets/StreamingAssets/GaussianAssets/`, about 5.5 GB for 14 clips) is **never** committed.
   It ships in release zips (GitHub caps each file at 2 GB, hence `4DV-Viewer-Win64.zip` + `Clips-Pack2/3`).
 - The clips and plugin are © 4DV.ai, shared for this demo. Keep the credit in README and release notes.
+- **Android** (README "Android") uses Leia's Unity plugin, which is proprietary and never committed
+  (`Assets/Leia/` is gitignored). Code for it goes behind `#if FOURDV_LEIA`. Build Android from a separate
+  checkout: `FourDVSetup.Build` refuses to run while `Assets/Leia` exists, because Leia's Windows runtime
+  hooks fight DisplayXR. Don't commit what `PrepareAndroid`/`BuildAndroid` change in that checkout
+  (ProjectSettings defines, the regenerated scene).
+- Android is Vulkan-only (4DV's wave-intrinsic sort), and Leia's head and UI-event cameras must stay on
+  renderer 1 (no splat feature), or every frame sorts and draws the clip three times.
 - Work on a branch and merge through a PR; end commit messages with the Co-Authored-By trailer.
 
 ## Releases and installing on the demo PC

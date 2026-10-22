@@ -159,12 +159,32 @@ public class FourDVPlayer : MonoBehaviour
     }
 
     // byteFolderPath is the editor path (Assets/StreamingAssets/GaussianAssets/<clip>); map it to the player's.
+    // On Android 4DV's plugin reads from persistentDataPath instead (StreamingAssets is inside the APK, and
+    // its FirstRunInstaller copies files out of it); this app's clips are pushed there over USB
+    // (Tools/push-android-clips.ps1), so the APK stays small.
     static string DataDir(GaussianSplat4DSource s)
     {
         var p = s.GSplat4DAsset.byteFolderPath.Replace('\\', '/');
         const string marker = "StreamingAssets/";
         int i = p.IndexOf(marker, System.StringComparison.Ordinal);
-        return i >= 0 ? Path.Combine(Application.streamingAssetsPath, p.Substring(i + marker.Length)) : p;
+        string root = Application.platform == RuntimePlatform.Android ? Application.persistentDataPath : Application.streamingAssetsPath;
+        return i >= 0 ? Path.Combine(root, p.Substring(i + marker.Length)) : p;
+    }
+
+    // Tablets: if a clip can't hold 27 fps, draw every other splat (4DV's DensityLOD, which grows the splats
+    // to cover), then every fourth. Only ever coarser within a clip, so it can't oscillate; a new clip starts
+    // at full density.
+    float m_FrameAvg = 1f / 60f, m_DensityHold;
+
+    void AdaptDensity()
+    {
+        var src = Current;
+        if (!Application.isMobilePlatform || src == null) return;
+        m_FrameAvg = Mathf.Lerp(m_FrameAvg, UnityEngine.Time.unscaledDeltaTime, 0.05f);
+        if (UnityEngine.Time.unscaledTime < m_DensityHold || m_FrameAvg < 1f / 27f || src.DensityLOD >= 2) return;
+        src.DensityLOD++;
+        m_DensityHold = UnityEngine.Time.unscaledTime + 3f;
+        Debug.Log($"[4DV] {src.GSplat4DAsset.name}: {1f / m_FrameAvg:0} fps, density 1/{1 << src.DensityLOD}");
     }
 
     void Update()
@@ -196,6 +216,7 @@ public class FourDVPlayer : MonoBehaviour
         }
         src.currentProgressTime = m_Time;
         SyncAudio();
+        AdaptDensity();
     }
 
     // ---- controls (keyboard and FourDVPanel) ----
@@ -206,6 +227,9 @@ public class FourDVPlayer : MonoBehaviour
         if (Current != null) Current.gameObject.SetActive(false);
         m_Index = ((index % m_Available.Count) + m_Available.Count) % m_Available.Count;
         Current.gameObject.SetActive(true);
+        Current.DensityLOD = 0;
+        m_DensityHold = UnityEngine.Time.unscaledTime + 3f;   // loading the first segment stalls a few frames
+        m_FrameAvg = 1f / 60f;
         m_Time = 0f;
         Debug.Log($"[4DV] Playing {Current.GSplat4DAsset.name} ({m_Index + 1}/{m_Available.Count})");
 
@@ -298,7 +322,7 @@ public class FourDVPlayer : MonoBehaviour
         {
             var path = Path.Combine(DataDir(src), "audio.mp3");
             if (!File.Exists(path)) yield break;
-            using var req = UnityWebRequestMultimedia.GetAudioClip("file:///" + path.Replace('\\', '/'), AudioType.MPEG);
+            using var req = UnityWebRequestMultimedia.GetAudioClip(new System.Uri(path).AbsoluteUri, AudioType.MPEG);
             yield return req.SendWebRequest();
             if (req.result != UnityWebRequest.Result.Success) { Debug.LogWarning($"[4DV] {name} audio: {req.error}"); yield break; }
             clip = DownloadHandlerAudioClip.GetContent(req);
