@@ -231,6 +231,7 @@ public class FourDVPanel : MonoBehaviour
 
         Refresh();
         if (m_Wsui != null && m_Visible) RoutePointer();
+        if (Application.isMobilePlatform) RouteTouch();
     }
 
     void Refresh()
@@ -315,6 +316,80 @@ public class FourDVPanel : MonoBehaviour
     {
         if (EventSystem.current != null) return;
         new GameObject("EventSystem", typeof(EventSystem), typeof(InputSystemUIInputModule));
+    }
+
+    // ---------------------------------------------------------------- touch (tablets)
+
+    // With DisplayXR's runtime running, Unity's main display renders at the eye-texture size (1920x1200) while
+    // touches arrive in screen pixels (2560x1600), and UGUI's raycaster rescales positions by that ratio, so
+    // its hits land in the wrong place. On tablets the panel hit-tests touches itself against its controls'
+    // rectangles (in each canvas's own pixels): buttons click on release, sliders drag. A tap that starts and
+    // ends between two frames still counts.
+    static FourDVPanel s_Instance;
+    Selectable m_TouchTarget;
+    bool m_TouchActive, m_LoggedTouchSpace;
+
+    void Awake() => s_Instance = this;
+
+    // FourDVOrbit asks before treating a touch as orbit / pinch.
+    public static bool HitsUi(Vector2 screenPos) => s_Instance != null && s_Instance.HitSelectable(screenPos) != null;
+
+    void RouteTouch()
+    {
+        var es = EventSystem.current;
+        if (es != null && es.currentInputModule != null && es.currentInputModule.enabled) es.currentInputModule.enabled = false;
+        var ts = Touchscreen.current;
+        if (ts == null) return;
+        var touch = ts.primaryTouch;
+        Vector2 pos = touch.position.ReadValue();
+        if (touch.press.wasPressedThisFrame && !m_TouchActive)
+        {
+            m_TouchActive = true;
+            m_TouchTarget = HitSelectable(pos);
+            if (m_TouchTarget == m_Progress) { m_Scrubbing = true; m_ScrubWasPaused = player.Paused; player.SetPaused(true); }
+            if (!m_LoggedTouchSpace)
+            {
+                m_LoggedTouchSpace = true;
+                Debug.Log($"[4DV] Touch UI: screen {Screen.width}x{Screen.height}, display rendering {Display.main.renderingWidth}x{Display.main.renderingHeight}, canvas {m_Canvas.pixelRect}");
+            }
+        }
+        if (!m_TouchActive) return;
+        if (m_TouchTarget is Slider slider) DragSlider(slider, pos);
+        if (touch.press.wasReleasedThisFrame || !touch.press.isPressed)
+        {
+            if (m_TouchTarget is Button button && HitSelectable(pos) == button) button.onClick.Invoke();
+            if (m_TouchTarget == m_Progress) { m_Scrubbing = false; player.SetPaused(m_ScrubWasPaused); }
+            m_TouchTarget = null;
+            m_TouchActive = false;
+        }
+    }
+
+    Selectable HitSelectable(Vector2 screenPos)
+    {
+        foreach (var canvas in GetComponentsInChildren<Canvas>())
+        {
+            if (!canvas.isActiveAndEnabled) continue;
+            var local = ToCanvasPixels(canvas, screenPos);
+            foreach (var sel in canvas.GetComponentsInChildren<Selectable>())
+                if (sel.isActiveAndEnabled && sel.interactable &&
+                    RectTransformUtility.RectangleContainsScreenPoint((RectTransform)sel.transform, local, null))
+                    return sel;
+        }
+        return null;
+    }
+
+    static Vector2 ToCanvasPixels(Canvas canvas, Vector2 screenPos)
+    {
+        var r = canvas.pixelRect;
+        return new Vector2(screenPos.x * r.width / Mathf.Max(Screen.width, 1), screenPos.y * r.height / Mathf.Max(Screen.height, 1));
+    }
+
+    void DragSlider(Slider slider, Vector2 screenPos)
+    {
+        var rt = (RectTransform)slider.transform;
+        var canvas = slider.GetComponentInParent<Canvas>();
+        if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(rt, ToCanvasPixels(canvas, screenPos), null, out var local)) return;
+        slider.normalizedValue = Mathf.Clamp01((local.x - rt.rect.xMin) / Mathf.Max(rt.rect.width, 1f));
     }
 
     // ---------------------------------------------------------------- pointer routing (3D)

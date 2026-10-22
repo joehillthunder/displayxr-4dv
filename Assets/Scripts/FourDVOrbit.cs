@@ -407,7 +407,7 @@ public class FourDVOrbit : MonoBehaviour
         if (n == 0) { m_PrevTouches = 0; m_TouchOnUi = false; return; }
         if (m_PrevTouches == 0)
         {
-            m_TouchOnUi = TouchOverUi(p0);
+            m_TouchOnUi = FourDVPanel.HitsUi(p0);
             if (s_Debug)
                 Debug.Log($"[4DV-DBG] touch at {p0} (screen {Screen.width}x{Screen.height}), over UI {m_TouchOnUi}, event system {EventSystem.current?.name} module {EventSystem.current?.currentInputModule?.GetType().Name}");
         }
@@ -435,15 +435,6 @@ public class FourDVOrbit : MonoBehaviour
             m_PinchDist = dist;
         }
         m_PrevTouches = n;
-    }
-
-    static bool TouchOverUi(Vector2 screenPos)
-    {
-        var es = EventSystem.current;
-        if (es == null) return false;
-        var hits = new System.Collections.Generic.List<RaycastResult>();
-        es.RaycastAll(new PointerEventData(es) { position = screenPos }, hits);
-        return hits.Count > 0;
     }
 
     void Apply()
