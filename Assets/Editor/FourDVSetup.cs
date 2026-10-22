@@ -334,8 +334,8 @@ public static class FourDVSetup
         var orbit = pivot.AddComponent<FourDVOrbit>();
         if (android)
         {
-            // DisplayXR's Android runtime through Unity's OpenXR: the panel's frame on the pivot (FourDVOrbit
-            // scales it to scene units per metre), and the XR camera in it, driven by the runtime's head pose.
+            // DisplayXR's Android runtime through Unity's OpenXR: the display rig's frame on the pivot, and the
+            // XR camera in it.
             var space = new GameObject("XR Space");
             space.transform.SetParent(pivot.transform, false);
             var camGo = new GameObject("XR Camera") { tag = "MainCamera" };
@@ -348,7 +348,8 @@ public static class FourDVSetup
             cam.farClipPlane = 1000f;
             cam.stereoTargetEye = StereoTargetEyeMask.Both;
             camGo.AddComponent<UniversalAdditionalCameraData>();
-            AddComponentByName(camGo, "UnityEngine.SpatialTracking.TrackedPoseDriver");   // center eye, rotation and position
+            // No TrackedPoseDriver: the runtime's eye poses drive rendering, and FourDVOrbit places this object
+            // (4DV's culling viewpoint) at the tracked head scaled into the display rig.
             orbit.xrSpace = space.transform;
             orbit.xrCamera = cam;
 

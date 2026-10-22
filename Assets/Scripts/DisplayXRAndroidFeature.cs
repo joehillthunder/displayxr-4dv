@@ -16,17 +16,76 @@ using UnityEditor.XR.OpenXR.Features;
 // This feature intercepts xrCreateVulkanDeviceKHR and hands the runtime a copy of the create info whose queue
 // infos have no pNext. Unity chains nothing there that the device needs. It also answers
 // xrSetAndroidApplicationThreadKHR itself (see GetProcAddr).
+//
+// And it declares the app's display rig (XR_DXR_view_rig) on every xrLocateViews: the virtual display at the
+// XR space's origin, Height app units tall, eye spread IpdFactor. The runtime then returns render-ready eye
+// poses and off-axis projections in scene units, so zoom and 3D strength work as on Windows (FourDVOrbit sets
+// both every frame).
 #if UNITY_EDITOR
 [OpenXRFeature(UiName = "DisplayXR Android compatibility",
     BuildTargetGroups = new[] { BuildTargetGroup.Android },
     Company = "DisplayXR Demos",
     Desc = "Sanitizes Unity's Vulkan device create info for DisplayXR's Android runtime.",
     Version = "1.0.0",
+    OpenxrExtensionStrings = ViewRigExtension,
     FeatureId = FeatureId)]
 #endif
 public class DisplayXRAndroidFeature : OpenXRFeature
 {
     public const string FeatureId = "com.displayxrdemos.fourdv.displayxr-android";
+    public const string ViewRigExtension = "XR_DXR_view_rig";
+    const int XR_TYPE_DISPLAY_RIG_DXR = 1004999140;
+
+    // Display rig, set by FourDVOrbit each frame (read on whichever thread Unity locates views).
+    public static volatile float Height = 1f;
+    public static volatile float IpdFactor = 1f;
+    public static bool ViewRigActive { get; private set; }
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    delegate int LocateViewsFn(ulong session, IntPtr viewLocateInfo, IntPtr viewState, uint capacity, IntPtr countOutput, IntPtr views);
+    static LocateViewsFn s_NextLocateViews;
+    static readonly LocateViewsFn s_LocateViews = LocateViews;
+
+    protected override bool OnInstanceCreate(ulong xrInstance)
+    {
+        ViewRigActive = UnityEngine.XR.OpenXR.OpenXRRuntime.IsExtensionEnabled(ViewRigExtension);
+        Debug.Log($"[4DV] DisplayXR view rig {(ViewRigActive ? "on" : "not offered by the runtime")}");
+        return true;
+    }
+
+    // XrViewLocateInfo (40 bytes, next at 8) gets a copy whose next is an XrDisplayRigDXR (64 bytes: type,
+    // next, XrPosef pose at 16 (orientation xyzw, position xyz), then virtualDisplayHeight, ipdFactor,
+    // parallaxFactor, perspectiveFactor at 44..56).
+    [MonoPInvokeCallback(typeof(LocateViewsFn))]
+    static int LocateViews(ulong session, IntPtr viewLocateInfo, IntPtr viewState, uint capacity, IntPtr countOutput, IntPtr views)
+    {
+        if (!ViewRigActive || viewLocateInfo == IntPtr.Zero)
+            return s_NextLocateViews(session, viewLocateInfo, viewState, capacity, countOutput, views);
+        IntPtr info = Copy(viewLocateInfo, 40);
+        IntPtr rig = Marshal.AllocHGlobal(64);
+        try
+        {
+            var zero = new byte[64];
+            Marshal.Copy(zero, 0, rig, 64);
+            Marshal.WriteInt32(rig, 0, XR_TYPE_DISPLAY_RIG_DXR);
+            Marshal.WriteIntPtr(rig, 8, Marshal.ReadIntPtr(viewLocateInfo, 8));
+            WriteFloat(rig, 28, 1f);                                   // orientation w (identity)
+            WriteFloat(rig, 44, Mathf.Max(Height, 1e-3f));
+            WriteFloat(rig, 48, Mathf.Clamp01(IpdFactor));
+            WriteFloat(rig, 52, 1f);                                   // parallaxFactor
+            WriteFloat(rig, 56, 1f);                                   // perspectiveFactor
+            Marshal.WriteIntPtr(info, 8, rig);
+            return s_NextLocateViews(session, info, viewState, capacity, countOutput, views);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(info);
+            Marshal.FreeHGlobal(rig);
+        }
+    }
+
+    static void WriteFloat(IntPtr p, int offset, float v) =>
+        Marshal.WriteInt32(p, offset, BitConverter.ToInt32(BitConverter.GetBytes(v), 0));
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     delegate int GetInstanceProcAddrFn(ulong instance, IntPtr name, IntPtr function);
@@ -64,6 +123,12 @@ public class DisplayXRAndroidFeature : OpenXRFeature
             // The runtime's handler calls a null compositor hook (SIGSEGV in
             // oxr_session_android_thread_settings). It's a scheduling hint only: accept it and do nothing.
             Marshal.WriteIntPtr(function, Marshal.GetFunctionPointerForDelegate(s_SetThread));
+            return result;
+        }
+        if (fn == "xrLocateViews")
+        {
+            s_NextLocateViews = Marshal.GetDelegateForFunctionPointer<LocateViewsFn>(Marshal.ReadIntPtr(function));
+            Marshal.WriteIntPtr(function, Marshal.GetFunctionPointerForDelegate(s_LocateViews));
             return result;
         }
         if (fn != "xrCreateVulkanDeviceKHR") return result;

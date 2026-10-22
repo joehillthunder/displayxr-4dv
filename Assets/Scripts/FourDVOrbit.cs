@@ -468,16 +468,22 @@ public class FourDVOrbit : MonoBehaviour
             ? new Vector3(0f, 0f, -d) : Vector3.zero;
     }
 
-    // DisplayXR's reference space has the panel at its origin and the viewer's tracked eyes in front of it, in
-    // metres, and the runtime computes each eye's off-axis projection itself. So xrSpace sits on the pivot,
-    // scaled to scene units per metre: the panel passes through the performer and shows displayHeight of scene,
-    // as on Windows, and the XR camera (the tracked head, so in front of the panel) is where 4DV's plugin culls
-    // and sorts from, with no viewpoint override.
+    // DisplayXR's Android runtime (an OpenXR runtime) computes the views. With XR_DXR_view_rig the app declares
+    // a display rig (DisplayXRAndroidFeature): the virtual display at the XR space's origin, displayHeight tall,
+    // eye spread Strength x DepthFit, and the runtime returns eye poses and off-axis projections in scene units,
+    // as DisplayXR does on Windows. The XR space sits on the pivot, so the display plane passes through the
+    // performer. Unity renders each eye from those poses; the camera object only matters to 4DV's plugin, which
+    // culls and sorts from it, so it's put at the tracked head, scaled into the rig.
+    //
+    // Without the extension (an older runtime) the XR space is scaled to scene units per metre instead, and
+    // the runtime's physical eyes are used as they are (no zoom-dependent depth, no strength).
     void ApplyOpenXR()
     {
         GetViewGeometry(out _, out _, out float viewer, out float spm);
+        UpdateDepthFit();
         var t = xrSpace;
-        t.localScale = Vector3.one * spm;
+        bool rig = DisplayXRAndroidFeature.ViewRigActive;
+        t.localScale = rig ? Vector3.one : Vector3.one * spm;
         t.localRotation = Quaternion.identity;
         var origin = Vector3.zero;
         if (ArMode)
@@ -487,16 +493,25 @@ public class FourDVOrbit : MonoBehaviour
             t.localRotation = ArTurn;
             origin = eye - ArTurn * eye;
         }
-        // Put the runtime's panel centre (not its tracking origin) on the pivot.
-        t.localPosition = origin - t.localRotation * (xrPanelOrigin * spm);
-        UpdateDepthFit();
+        t.localPosition = rig ? origin : origin - t.localRotation * (xrPanelOrigin * spm);
+        DisplayXRAndroidFeature.Height = displayHeight;
+        DisplayXRAndroidFeature.IpdFactor = Is3D ? Mathf.Min(Strength * DepthFit, 1f) : 0f;
         if (xrCamera == null) return;
+
+        var head = UnityEngine.XR.InputDevices.GetDeviceAtXRNode(UnityEngine.XR.XRNode.CenterEye);
+        Vector3 headPos = xrPanelOrigin + new Vector3(0f, 0f, -0.45f);
+        if (head.isValid) head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.centerEyePosition, out headPos);
+        var c = xrCamera.transform;
+        c.localRotation = Quaternion.identity;
+        c.localPosition = rig ? (headPos - xrPanelOrigin) * spm : headPos;
+
         // Clip anything more than s_MaxPopOut in front of the panel: see ApplyNearClip.
-        float toPanel = Vector3.Dot(t.position - xrCamera.transform.position, t.forward);
+        var panel = ScreenTransform;
+        float toPanel = Vector3.Dot(panel.position - c.position, panel.forward);
         xrCamera.nearClipPlane = Mathf.Max(0.01f, toPanel - s_MaxPopOut * spm);
         xrCamera.farClipPlane = 1000f;
         if (s_Debug && Time.frameCount % 120 == 0)
-            Debug.Log($"[4DV-DBG] xr head {xrCamera.transform.localPosition.ToString("F3")} m, panel {Screen.width}x{Screen.height} @ {Screen.dpi} dpi, near {xrCamera.nearClipPlane:0.00}");
+            Debug.Log($"[4DV-DBG] rig {rig} head {headPos.ToString("F3")} m, camera {c.localPosition.ToString("F2")}, height {displayHeight:0.00}, ipd {DisplayXRAndroidFeature.IpdFactor:0.00}, near {xrCamera.nearClipPlane:0.00}");
     }
 
     Transform m_XrPanel;
@@ -514,7 +529,7 @@ public class FourDVOrbit : MonoBehaviour
                     m_XrPanel = new GameObject("XR Panel").transform;
                     m_XrPanel.SetParent(xrSpace, false);
                 }
-                m_XrPanel.localPosition = xrPanelOrigin;
+                m_XrPanel.localPosition = DisplayXRAndroidFeature.ViewRigActive ? Vector3.zero : xrPanelOrigin;
                 return m_XrPanel;
             }
             return display != null ? display.transform : null;

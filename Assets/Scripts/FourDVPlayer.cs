@@ -171,20 +171,28 @@ public class FourDVPlayer : MonoBehaviour
         return i >= 0 ? Path.Combine(root, p.Substring(i + marker.Length)) : p;
     }
 
-    // Tablets: if a clip can't hold 27 fps, draw every other splat (4DV's DensityLOD, which grows the splats
-    // to cover), then every fourth. Only ever coarser within a clip, so it can't oscillate; a new clip starts
-    // at full density.
-    float m_FrameAvg = 1f / 60f, m_DensityHold;
+    // Tablets: if a clip can't hold 24 fps, draw every other splat (4DV's DensityLOD, which grows the splats
+    // to cover). Decided from a 2 s average that starts 4 s after the clip is selected (loading the first
+    // segment stalls the first frames), and only ever coarser within a clip, so it can't oscillate; a new clip
+    // starts at full density.
+    float m_DensityHold, m_FrameSum;
+    int m_FrameCount;
 
     void AdaptDensity()
     {
         var src = Current;
-        if (!Application.isMobilePlatform || src == null) return;
-        m_FrameAvg = Mathf.Lerp(m_FrameAvg, UnityEngine.Time.unscaledDeltaTime, 0.05f);
-        if (UnityEngine.Time.unscaledTime < m_DensityHold || m_FrameAvg < 1f / 27f || src.DensityLOD >= 2) return;
+        if (!Application.isMobilePlatform || src == null || src.DensityLOD >= 1) return;
+        if (UnityEngine.Time.unscaledTime < m_DensityHold) { m_FrameSum = 0f; m_FrameCount = 0; return; }
+        m_FrameSum += UnityEngine.Time.unscaledDeltaTime;
+        m_FrameCount++;
+        if (m_FrameSum < 2f) return;
+        float fps = m_FrameCount / m_FrameSum;
+        m_FrameSum = 0f;
+        m_FrameCount = 0;
+        Debug.Log($"[4DV] {src.GSplat4DAsset.name}: {fps:0} fps");
+        if (fps >= 24f) return;
         src.DensityLOD++;
-        m_DensityHold = UnityEngine.Time.unscaledTime + 3f;
-        Debug.Log($"[4DV] {src.GSplat4DAsset.name}: {1f / m_FrameAvg:0} fps, density 1/{1 << src.DensityLOD}");
+        Debug.Log($"[4DV] {src.GSplat4DAsset.name}: density 1/{1 << src.DensityLOD}");
     }
 
     void Update()
@@ -228,8 +236,7 @@ public class FourDVPlayer : MonoBehaviour
         m_Index = ((index % m_Available.Count) + m_Available.Count) % m_Available.Count;
         Current.gameObject.SetActive(true);
         Current.DensityLOD = 0;
-        m_DensityHold = UnityEngine.Time.unscaledTime + 3f;   // loading the first segment stalls a few frames
-        m_FrameAvg = 1f / 60f;
+        m_DensityHold = UnityEngine.Time.unscaledTime + 4f;   // loading the first segment stalls a few frames
         m_Time = 0f;
         Debug.Log($"[4DV] Playing {Current.GSplat4DAsset.name} ({m_Index + 1}/{m_Available.Count})");
 
