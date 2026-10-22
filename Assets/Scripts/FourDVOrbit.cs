@@ -105,6 +105,9 @@ public class FourDVOrbit : MonoBehaviour
         m_DefaultHeight = Arg("-4dv-height", 1, displayHeight);
         UseDefaultHome();
         ScheduleScreenshotFromArgs();
+#if FOURDV_LEIA
+        if (leia != null) SetupLeiaPresent();
+#endif
         DisplayXRProvider.EyeTrackingStateChanged += (tracked, mode) =>
             Debug.Log($"[4DV] Eye tracking {(tracked ? "ON" : "OFF")} (mode {mode})");
     }
@@ -505,6 +508,48 @@ public class FourDVOrbit : MonoBehaviour
             eye.nearClipPlane = Mathf.Max(0.01f, toPanel - s_MaxPopOut * scenePerMetre);
             eye.farClipPlane = 1000f;
         }
+    }
+
+    // Leia's own presentation (Head's end-of-frame blit of the woven texture to the camera target) shows
+    // nothing on Vulkan on the Nubia Pad 3D II, Leia's own sample included: the screen stays black. So the app
+    // runs Leia's weave itself once the cameras have rendered, into a screen-sized texture, and shows that
+    // through a screen-space UI layer behind the panel (the path the panel is drawn by, which works).
+    RenderTexture m_Woven;
+    UnityEngine.UI.RawImage m_WovenImage;
+
+    void SetupLeiaPresent()
+    {
+        var go = new GameObject("Leia Woven Image", typeof(RectTransform), typeof(Canvas), typeof(UnityEngine.UI.RawImage));
+        go.transform.SetParent(transform, false);
+        var canvas = go.GetComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.sortingOrder = -100;
+        m_WovenImage = go.GetComponent<UnityEngine.UI.RawImage>();
+        m_WovenImage.raycastTarget = false;
+        m_WovenImage.color = Color.white;
+        UnityEngine.Rendering.RenderPipelineManager.endContextRendering += WeaveLeia;
+    }
+
+    void WeaveLeia(UnityEngine.Rendering.ScriptableRenderContext context, System.Collections.Generic.List<Camera> cameras)
+    {
+        var device = LeiaUnity.RenderTrackingDevice.Instance;
+        if (leia == null || leia.ViewersHead == null || device == null || leia.GetEyeCamera(0).targetTexture == null) return;
+        if (m_Woven == null || m_Woven.width != Screen.width || m_Woven.height != Screen.height)
+        {
+            if (m_Woven != null) { m_Woven.Release(); Destroy(m_Woven); }
+            m_Woven = new RenderTexture(Screen.width, Screen.height, 0, RenderTextureFormat.ARGB32) { name = "Leia Woven" };
+            m_Woven.Create();
+            m_WovenImage.texture = m_Woven;
+            var eye = leia.GetEyeCamera(0).targetTexture;
+            Debug.Log($"[4DV] Leia weave {m_Woven.width}x{m_Woven.height} from views {eye.width}x{eye.height}");
+        }
+        device.Render(leia, ref m_Woven);
+    }
+
+    void OnDestroy()
+    {
+        UnityEngine.Rendering.RenderPipelineManager.endContextRendering -= WeaveLeia;
+        if (m_Woven != null) m_Woven.Release();
     }
 
     static bool SetupLeiaCamera(Camera cam, int renderer)
