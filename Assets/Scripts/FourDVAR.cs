@@ -31,6 +31,8 @@ public class FourDVAR : MonoBehaviour
     public float cropRadius = 0.7f;          // metres around the performer (in the capture)
     public float backgroundDistance = 6f;    // metres: the camera image, well behind the figure
 
+    static readonly bool s_Debug = System.Array.IndexOf(System.Environment.GetCommandLineArgs(), "-4dv-debug") >= 0;
+
     public bool Active { get; private set; }
     public bool Starting { get; private set; }
     public string Status { get; private set; } = "";
@@ -230,6 +232,11 @@ public class FourDVAR : MonoBehaviour
         DisplayXRAndroidFeature.ConvergenceDiopters = 1f / dist;
         DisplayXRAndroidFeature.IpdFactor = orbit.Is3D ? orbit.Strength : 0f;
         Status = $"Size {FigureScale * 100f:0}% · surface {SurfaceDrop * 100f:0} cm below";
+        if (s_Debug && Time.frameCount % 90 == 0)
+        {
+            var local = cam.InverseTransformPoint(m_Spot);
+            Debug.Log($"[4DV-DBG] AR spot {m_Spot.ToString("F2")} (camera-local {local.ToString("F2")}), camera fwd {cam.forward.ToString("F2")}, clips {m_Clips.position.ToString("F2")} x{FigureScale:0.00}, clip {src?.name} active {src?.gameObject.activeInHierarchy}, crop {(src != null && src.GSFXShader != null)}, ipd {DisplayXRAndroidFeature.IpdFactor:0.00} conv {DisplayXRAndroidFeature.ConvergenceDiopters:0.00} vfov {m_VFov * Mathf.Rad2Deg:0}");
+        }
 
         if (m_Overlay == null)
         {
