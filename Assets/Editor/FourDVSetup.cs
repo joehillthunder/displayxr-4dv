@@ -283,6 +283,12 @@ public static class FourDVSetup
         if (openxr != null)
         {
             openxr.renderMode = UnityEngine.XR.OpenXR.OpenXRSettings.RenderMode.MultiPass;
+            // DisplayXRAndroidFeature: works around the runtime crashing on Unity's Vulkan device create info.
+            UnityEditor.XR.OpenXR.Features.FeatureHelpers.RefreshFeatures(BuildTargetGroup.Android);
+            var compat = openxr.GetFeature<DisplayXRAndroidFeature>();
+            if (compat == null) Fail("DisplayXRAndroidFeature isn't registered with OpenXR for Android");
+            compat.enabled = true;
+            EditorUtility.SetDirty(compat);
             EditorUtility.SetDirty(openxr);
         }
         EditorUtility.SetDirty(android);
