@@ -357,10 +357,12 @@ public class FourDVOrbit : MonoBehaviour
             if (kb.iKey.wasPressedThisFrame) DisplayXRScreenshot.Capture();
             if (kb.escapeKey.wasPressedThisFrame) Application.Quit();
         }
+#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN || UNITY_STANDALONE_LINUX
         // the woven window's close button / Alt+F4 arrive as a native request
         try { if (DisplayXRNative.displayxr_consume_overlay_close_request() != 0) Application.Quit(); }
         catch (EntryPointNotFoundException) { }
         catch (DllNotFoundException) { }
+#endif
 
         Apply();
         LogEyes();
@@ -552,11 +554,13 @@ public class FourDVOrbit : MonoBehaviour
     void PollButtons()
     {
         int b = 0;
+#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN   // DisplayXR's overlay window exists only on Windows
         if (ProviderActive())
         {
             try { DisplayXRNative.displayxr_get_overlay_pointer(out _, out _, out b); }
             catch (EntryPointNotFoundException) { }
         }
+#endif
         var m = Mouse.current;
         if (m != null)
         {

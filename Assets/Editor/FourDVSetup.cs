@@ -84,9 +84,10 @@ public static class FourDVSetup
                 Fail("Leia's Unity plugin not found. Download LeiaUnity (Unity, Windows + Android) from support.immersity.ai/sdk " +
                      "and pass -leia-package <path to .unitypackage>.");
             Debug.Log($"[4DV] Importing {package}");
-            AssetDatabase.ImportPackage(package, false);
-            AssetDatabase.Refresh();
+            UnpackUnityPackage(package);
         }
+        PatchLeia();
+        AssetDatabase.Refresh();
         // FOURDV_LEIA: the app's Leia rig. LEIA_URP_DETECTED: Leia's URP paths (its editor adds it on reload,
         // set here too so a headless run doesn't depend on that). DISPLAYXR_NO_SPLASH: DisplayXR's boot splash
         // spawns its own camera, which would cover Leia's.
@@ -99,6 +100,57 @@ public static class FourDVSetup
             EditorUserBuildSettings.SwitchActiveBuildTarget(BuildTargetGroup.Android, BuildTarget.Android);
         AssetDatabase.SaveAssets();
         Debug.Log("[4DV] Android prepared; now run FourDVSetup.BuildAndroid");
+    }
+
+    // AssetDatabase.ImportPackage only queues the import, so a -batchmode -quit run exits before anything lands.
+    // A .unitypackage is a tar.gz of <guid>/{pathname, asset, asset.meta}: unpack it with Windows' tar and copy
+    // each asset and its meta to its path.
+    static void UnpackUnityPackage(string package)
+    {
+        var tmp = Path.Combine(Path.GetTempPath(), "4dv-unitypackage-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tmp);
+        try
+        {
+            var tar = new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "tar.exe"), $"-xzf \"{package}\" -C \"{tmp}\"")
+                { UseShellExecute = false, CreateNoWindow = true };
+            using (var p = System.Diagnostics.Process.Start(tar))
+            {
+                p.WaitForExit();
+                if (p.ExitCode != 0) Fail($"tar couldn't unpack {package} ({p.ExitCode})");
+            }
+            int files = 0;
+            foreach (var dir in Directory.GetDirectories(tmp))
+            {
+                var pathname = Path.Combine(dir, "pathname");
+                if (!File.Exists(pathname)) continue;
+                var rel = File.ReadAllLines(pathname)[0].Trim();
+                if (!rel.StartsWith(kLeiaFolder + "/", StringComparison.Ordinal) && rel != kLeiaFolder) continue;
+                var asset = Path.Combine(dir, "asset");
+                if (File.Exists(asset))
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(rel));
+                    File.Copy(asset, rel, true);
+                    files++;
+                }
+                else Directory.CreateDirectory(rel);
+                var meta = Path.Combine(dir, "asset.meta");
+                if (File.Exists(meta)) File.Copy(meta, rel + ".meta", true);
+            }
+            Debug.Log($"[4DV] Unpacked {files} files to {kLeiaFolder}");
+        }
+        finally { Directory.Delete(tmp, true); }
+    }
+
+    // LeiaUnity 3.3.2 doesn't compile for an Android player: RenderTrackingDevice.Update (Android only) tests
+    // `is3DScene`, a field that's called sceneContainsLeiaDisplay everywhere else.
+    static void PatchLeia()
+    {
+        const string path = kLeiaFolder + "/Devices/RenderTrackingDevice.cs";
+        if (!File.Exists(path)) return;
+        var text = File.ReadAllText(path);
+        if (!text.Contains("if(!is3DScene) return;")) return;
+        File.WriteAllText(path, text.Replace("if(!is3DScene) return;", "if(!sceneContainsLeiaDisplay) return;"));
+        Debug.Log("[4DV] Patched Leia's RenderTrackingDevice (is3DScene -> sceneContainsLeiaDisplay)");
     }
 
     static string FindLeiaPackage()

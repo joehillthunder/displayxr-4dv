@@ -385,6 +385,7 @@ public class FourDVPanel : MonoBehaviour
     static bool TryCursorFraction(out Vector2 frac)
     {
         frac = default;
+#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN   // DisplayXR's overlay window exists only on Windows
         try
         {
             DisplayXRNative.displayxr_get_overlay_pointer(out int cx, out int cy, out _);
@@ -396,6 +397,7 @@ public class FourDVPanel : MonoBehaviour
             }
         }
         catch (System.EntryPointNotFoundException) { }
+#endif
         var m = Mouse.current;
         if (m == null || Screen.width <= 0 || Screen.height <= 0) return false;
         var p = m.position.ReadValue();
@@ -407,8 +409,10 @@ public class FourDVPanel : MonoBehaviour
     static bool LeftDown()
     {
         int b = 0;
+#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
         try { DisplayXRNative.displayxr_get_overlay_pointer(out _, out _, out b); }
         catch (System.EntryPointNotFoundException) { }
+#endif
         return (b & 1) != 0 || (Mouse.current != null && Mouse.current.leftButton.isPressed);
     }
 

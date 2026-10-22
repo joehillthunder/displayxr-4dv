@@ -26,7 +26,8 @@ Get-ChildItem $managed -Filter *.dll | Where-Object Name -ne 'Assembly-CSharp.dl
 
 $repo = Split-Path $PSScriptRoot
 $sources = @(Get-ChildItem (Join-Path $repo 'Assets\Scripts') -Filter *.cs) + (Get-Item (Join-Path $PSScriptRoot 'MonoScriptTypes.cs'))
-$parse = [Microsoft.CodeAnalysis.CSharp.CSharpParseOptions]::new([Microsoft.CodeAnalysis.CSharp.LanguageVersion]::CSharp9)
+$parse = [Microsoft.CodeAnalysis.CSharp.CSharpParseOptions]::new([Microsoft.CodeAnalysis.CSharp.LanguageVersion]::CSharp9).
+    WithPreprocessorSymbols([string[]]@('UNITY_STANDALONE_WIN', 'UNITY_STANDALONE', 'PLATFORM_STANDALONE_WIN'))
 $trees = $sources | ForEach-Object {
     [Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree]::ParseText([IO.File]::ReadAllText($_.FullName), $parse, $_.FullName)
 }

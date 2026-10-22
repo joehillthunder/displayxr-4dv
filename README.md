@@ -123,7 +123,8 @@ Building it needs Unity 2022.3 with Android Build Support, and Leia's Unity plug
 "Unity (Windows + Android)" at [support.immersity.ai/sdk](https://support.immersity.ai/sdk), sign-in needed).
 The plugin is proprietary, so it isn't in git. Its Windows runtime also starts Leia SR weaving on its own,
 which fights DisplayXR, so build Android from a **separate checkout** (e.g. `git worktree add ../4dv-android`),
-never the one used for Windows builds:
+never the one used for Windows builds. Keep its path short (like `C:\dev\4dv-android`): package files deep
+in `Library/PackageCache` fail to import past Windows' 260-character path limit.
 
 ```bat
 Unity.exe -batchmode -quit -buildTarget Android -projectPath . -executeMethod FourDVSetup.PrepareAndroid -leia-package C:\path\LeiaUnity-3.3.2+454.74e0328.unitypackage -logFile Logs\prepare.log
