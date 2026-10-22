@@ -127,7 +127,7 @@ It ships five lighter clips: Dance, Cat, Kat Miche, Tim Talk and Dance 2, about 
    the tablet twice (USB and wireless debugging).
 
 **Building it** needs Unity 2022.3 with Android Build Support. Build from a checkout whose path is short (like
-`C:\devdv-android`: package files deep in `Library/PackageCache` fail to import past Windows' 260-character
+`C:\dev\4dv-android`: package files deep in `Library/PackageCache` fail to import past Windows' 260-character
 limit) and without `Assets/StreamingAssets/GaussianAssets` (it would go into the APK):
 
 ```bat
