@@ -141,16 +141,29 @@ public static class FourDVSetup
         finally { Directory.Delete(tmp, true); }
     }
 
-    // LeiaUnity 3.3.2 doesn't compile for an Android player: RenderTrackingDevice.Update (Android only) tests
-    // `is3DScene`, a field that's called sceneContainsLeiaDisplay everywhere else.
+    // Two fixes to LeiaUnity 3.3.2's Android code (its sample has both problems too):
+    // - RenderTrackingDevice.Update (Android only) tests `is3DScene`, a field that's called
+    //   sceneContainsLeiaDisplay everywhere else, so an Android player doesn't compile.
+    // - Interlacer.SetOutput hands the native interlacer the output RenderTexture's GetNativeTexturePtr. On
+    //   Vulkan a render target has to go through its color buffer; otherwise the interlacer's first
+    //   vkCreateFramebuffer dereferences a null image view and the app crashes on its first frame.
     static void PatchLeia()
     {
-        const string path = kLeiaFolder + "/Devices/RenderTrackingDevice.cs";
+        Patch(kLeiaFolder + "/Devices/RenderTrackingDevice.cs",
+              "if(!is3DScene) return;", "if(!sceneContainsLeiaDisplay) return;");
+        Patch(kLeiaFolder + "/Devices/AndroidLeiaDevice/CNSDK/dotnet/core/interlacer.cs",
+              "leiaSdkUnityRenderingPluginSetOutput(output.GetNativeTexturePtr(), output.width, output.height);",
+              "leiaSdkUnityRenderingPluginSetOutput(SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Vulkan\n" +
+              "                ? output.colorBuffer.GetNativeRenderBufferPtr() : output.GetNativeTexturePtr(), output.width, output.height);   // patched by FourDVSetup");
+    }
+
+    static void Patch(string path, string from, string to)
+    {
         if (!File.Exists(path)) return;
         var text = File.ReadAllText(path);
-        if (!text.Contains("if(!is3DScene) return;")) return;
-        File.WriteAllText(path, text.Replace("if(!is3DScene) return;", "if(!sceneContainsLeiaDisplay) return;"));
-        Debug.Log("[4DV] Patched Leia's RenderTrackingDevice (is3DScene -> sceneContainsLeiaDisplay)");
+        if (!text.Contains(from)) return;
+        File.WriteAllText(path, text.Replace(from, to));
+        Debug.Log($"[4DV] Patched {path}");
     }
 
     static string FindLeiaPackage()
