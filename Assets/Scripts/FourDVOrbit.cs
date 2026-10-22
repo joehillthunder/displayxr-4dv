@@ -31,6 +31,11 @@ public class FourDVOrbit : MonoBehaviour
     public Camera fallbackCamera;
     public Transform xrSpace;               // Android (OpenXR): the panel's frame
     public Camera xrCamera;
+    // Where DisplayXR's Android runtime puts the panel centre in its tracking space (its rig origin, a standing
+    // eye height; it logs "Rig source ... armed at (0.000, 1.600, 0.000)"), and the panel's size (its
+    // display_info: 0.2600 x 0.1630 m on the Nubia Pad 3D II; Android's reported 320 dpi would say 0.127 m).
+    public Vector3 xrPanelOrigin = new Vector3(0f, 1.6f, 0f);
+    public Vector2 xrPanelSize = new Vector2(0.26f, 0.163f);
 
     public static readonly Color Background = new Color(0.02f, 0.03f, 0.05f);
 
@@ -221,12 +226,10 @@ public class FourDVOrbit : MonoBehaviour
         physW = panelW; physH = panelH;
         if (xrSpace != null)
         {
-            // OpenXR doesn't report the panel's size; the screen's own DPI does. The viewing distance is the
-            // tracked head's, in the panel's frame (metres).
-            float dpi = Screen.dpi > 50f ? Screen.dpi : 250f;
-            physW = panelW = Screen.width / dpi * 0.0254f;
-            physH = Screen.height / dpi * 0.0254f;
-            float z = xrCamera != null ? Mathf.Abs(xrCamera.transform.localPosition.z) : 0f;
+            // The viewing distance is the tracked head's, from the panel (metres).
+            physW = panelW = xrPanelSize.x;
+            physH = xrPanelSize.y;
+            float z = xrCamera != null ? Mathf.Abs(xrCamera.transform.localPosition.z - xrPanelOrigin.z) : 0f;
             viewer = z > 0.2f && z < 1.5f ? z : 0.45f;
             return;
         }
@@ -475,15 +478,17 @@ public class FourDVOrbit : MonoBehaviour
         GetViewGeometry(out _, out _, out float viewer, out float spm);
         var t = xrSpace;
         t.localScale = Vector3.one * spm;
-        t.localPosition = Vector3.zero;
         t.localRotation = Quaternion.identity;
+        var origin = Vector3.zero;
         if (ArMode)
         {
             // Turn the panel about the nominal eye point, not the pivot.
             var eye = new Vector3(0f, 0f, -viewer * spm);
             t.localRotation = ArTurn;
-            t.localPosition = eye - ArTurn * eye;
+            origin = eye - ArTurn * eye;
         }
+        // Put the runtime's panel centre (not its tracking origin) on the pivot.
+        t.localPosition = origin - t.localRotation * (xrPanelOrigin * spm);
         UpdateDepthFit();
         if (xrCamera == null) return;
         // Clip anything more than s_MaxPopOut in front of the panel: see ApplyNearClip.
@@ -494,12 +499,24 @@ public class FourDVOrbit : MonoBehaviour
             Debug.Log($"[4DV-DBG] xr head {xrCamera.transform.localPosition.ToString("F3")} m, panel {Screen.width}x{Screen.height} @ {Screen.dpi} dpi, near {xrCamera.nearClipPlane:0.00}");
     }
 
+    Transform m_XrPanel;
+
     // The virtual screen (what the woven image shows): the XR space on Android, DisplayXR's display elsewhere.
     public Transform ScreenTransform
     {
         get
         {
-            if (xrSpace != null) return xrSpace;
+            if (xrSpace != null)
+            {
+                // The panel centre inside the XR space (the AR camera image hangs off it).
+                if (m_XrPanel == null)
+                {
+                    m_XrPanel = new GameObject("XR Panel").transform;
+                    m_XrPanel.SetParent(xrSpace, false);
+                }
+                m_XrPanel.localPosition = xrPanelOrigin;
+                return m_XrPanel;
+            }
             return display != null ? display.transform : null;
         }
     }
