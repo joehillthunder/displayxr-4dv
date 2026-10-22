@@ -172,7 +172,8 @@ public class FourDVAR : MonoBehaviour
         float h = orbit.displayHeight;
         float w = h * Screen.width / Mathf.Max(Screen.height, 1);
         float dist = viewer * spm, behind = backgroundDepth * h;
-        float grow = (dist + behind) / Mathf.Max(dist, 1e-3f) * 1.15f;
+        // 1.8x margin: the tracked eyes can sit well off the panel's centre line (and the frustum with them).
+        float grow = (dist + behind) / Mathf.Max(dist, 1e-3f) * 1.8f;
 
         int angle = m_Cam.videoRotationAngle;
         bool sideways = angle % 180 != 0;
