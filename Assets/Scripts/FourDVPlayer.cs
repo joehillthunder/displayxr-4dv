@@ -171,7 +171,7 @@ public class FourDVPlayer : MonoBehaviour
         return i >= 0 ? Path.Combine(root, p.Substring(i + marker.Length)) : p;
     }
 
-    // Tablets: if a clip can't hold 24 fps, draw every other splat (4DV's DensityLOD, which grows the splats
+    // Tablets: if a clip can't hold 20 fps, draw every other splat (4DV's DensityLOD, which grows the splats
     // to cover). Decided from a 2 s average that starts 4 s after the clip is selected (loading the first
     // segment stalls the first frames), and only ever coarser within a clip, so it can't oscillate; a new clip
     // starts at full density.
@@ -190,7 +190,7 @@ public class FourDVPlayer : MonoBehaviour
         m_FrameSum = 0f;
         m_FrameCount = 0;
         Debug.Log($"[4DV] {src.GSplat4DAsset.name}: {fps:0} fps");
-        if (fps >= 24f) return;
+        if (fps >= 20f) return;
         src.DensityLOD++;
         Debug.Log($"[4DV] {src.GSplat4DAsset.name}: density 1/{1 << src.DensityLOD}");
     }

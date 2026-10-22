@@ -497,6 +497,9 @@ public class FourDVOrbit : MonoBehaviour
     void ApplyOpenXR()
     {
         if (!m_OriginSet && Time.frameCount % 30 == 0 && m_OriginTries++ < 10) SetDeviceTrackingOrigin();
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (!m_TouchPassThrough && Time.frameCount % 60 == 0 && m_TouchTries++ < 30) PassTouchesThroughRuntimeWindow();
+#endif
         GetViewGeometry(out _, out _, out float viewer, out float spm);
         UpdateDepthFit();
         var t = xrSpace;
@@ -528,7 +531,9 @@ public class FourDVOrbit : MonoBehaviour
         c.localPosition = headPos;
         var panel = ScreenTransform;
         float viewerUnits = viewer * spm;
-        Vector3 nominal = panel.position - panel.forward * viewerUnits;
+        // Measured from s_SplatViewDistance x the viewing distance, which halves 4DV's blur floor (see
+        // ApplySplatViewpoint).
+        Vector3 nominal = panel.position - panel.forward * (viewerUnits * s_SplatViewDistance);
         xrCamera.worldToCameraMatrix = Matrix4x4.Scale(new Vector3(1f, 1f, -1f)) *
                                        Matrix4x4.TRS(nominal, panel.rotation, Vector3.one).inverse;
 
@@ -541,6 +546,39 @@ public class FourDVOrbit : MonoBehaviour
             LogXrViews();
         }
     }
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+    // DisplayXR's runtime (running in this process) shows the woven image in its own full-screen window,
+    // titled "DisplayXR", on top of the app's, and that window takes every touch: the panel and the app's
+    // orbit/pinch never get any. Mark it FLAG_NOT_TOUCHABLE so touches fall through to the app's window
+    // (the runtime's own touch navigation stops; the app's replaces it).
+    bool m_TouchPassThrough;
+    int m_TouchTries;
+
+    void PassTouchesThroughRuntimeWindow()
+    {
+        var activity = new AndroidJavaClass("com.unity3d.player.UnityPlayer").GetStatic<AndroidJavaObject>("currentActivity");
+        activity.Call("runOnUiThread", new AndroidJavaRunnable(() =>
+        {
+            try
+            {
+                var wmg = new AndroidJavaClass("android.view.WindowManagerGlobal").CallStatic<AndroidJavaObject>("getInstance");
+                foreach (var name in wmg.Call<string[]>("getViewRootNames"))
+                {
+                    if (!name.StartsWith("DisplayXR/", StringComparison.Ordinal)) continue;
+                    var view = wmg.Call<AndroidJavaObject>("getRootView", name);
+                    var lp = view.Call<AndroidJavaObject>("getLayoutParams");
+                    const int FLAG_NOT_TOUCHABLE = 0x10;
+                    lp.Set("flags", lp.Get<int>("flags") | FLAG_NOT_TOUCHABLE);
+                    activity.Call<AndroidJavaObject>("getWindowManager").Call("updateViewLayout", view, lp);
+                    m_TouchPassThrough = true;
+                    Debug.Log($"[4DV] Touches now pass through the runtime's window ({name})");
+                }
+            }
+            catch (Exception e) { Debug.LogWarning($"[4DV] Couldn't pass touches through the runtime's window: {e.Message}"); m_TouchTries = 99; }
+        }));
+    }
+#endif
 
     // What URP renders each eye with: the XR display subsystem's view and projection for this camera.
     void LogXrViews()

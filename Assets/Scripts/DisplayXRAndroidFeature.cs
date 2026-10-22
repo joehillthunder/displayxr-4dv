@@ -20,14 +20,15 @@ using UnityEditor.XR.OpenXR.Features;
 // And it declares the app's display rig (XR_DXR_view_rig) on every xrLocateViews: the virtual display at the
 // XR space's origin, Height app units tall, eye spread IpdFactor. The runtime then returns render-ready eye
 // poses and off-axis projections in scene units, so zoom and 3D strength work as on Windows (FourDVOrbit sets
-// both every frame).
+// both every frame). Enabling XR_DXR_display_info also lifts the runtime's "legacy session" 0.75 view scale,
+// so each eye renders at the panel's full view resolution.
 #if UNITY_EDITOR
 [OpenXRFeature(UiName = "DisplayXR Android compatibility",
     BuildTargetGroups = new[] { BuildTargetGroup.Android },
     Company = "DisplayXR Demos",
     Desc = "Sanitizes Unity's Vulkan device create info for DisplayXR's Android runtime.",
     Version = "1.0.0",
-    OpenxrExtensionStrings = ViewRigExtension,
+    OpenxrExtensionStrings = ViewRigExtension + " XR_DXR_display_info",
     FeatureId = FeatureId)]
 #endif
 public class DisplayXRAndroidFeature : OpenXRFeature
