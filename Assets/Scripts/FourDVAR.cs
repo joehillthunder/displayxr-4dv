@@ -130,13 +130,20 @@ public class FourDVAR : MonoBehaviour
             m_ClipsRot = m_Clips.rotation;
             m_ClipsScale = m_Clips.localScale;
             DisplayXRAndroidFeature.CameraRig = true;
-            m_Quad.SetActive(false);
-            CreateOverlay();
-            if (orbit.xrCamera != null)
+            // Test switches (adb ... -e unity "-4dv-arbg overlay -4dv-arclear"): how the camera image and the
+            // XR view's background reach the screen.
+            var args = System.Environment.GetCommandLineArgs();
+            if (System.Array.IndexOf(args, "-4dv-arbg") >= 0 && System.Array.IndexOf(args, "overlay") >= 0)
+            {
+                m_Quad.SetActive(false);
+                CreateOverlay();
+            }
+            if (orbit.xrCamera != null && System.Array.IndexOf(args, "-4dv-arclear") >= 0)
             {
                 m_Background = orbit.xrCamera.backgroundColor;
                 orbit.xrCamera.backgroundColor = new Color(0f, 0f, 0f, 0f);
             }
+            Debug.Log($"[4DV] AR: camera image {(m_Overlay != null ? "UI overlay" : "XR quad")}, XR background {(orbit.xrCamera != null ? orbit.xrCamera.backgroundColor.ToString() : "?")}");
         }
         m_HaveRef = false;
         m_Placed = false;
@@ -166,7 +173,8 @@ public class FourDVAR : MonoBehaviour
             m_Clips = null;
         }
         SetCrop(null);
-        if (m_Overlay != null) { Destroy(m_Overlay.canvas.gameObject); m_Overlay = null; if (orbit != null && orbit.xrCamera != null) orbit.xrCamera.backgroundColor = m_Background; }
+        if (m_Overlay != null) { Destroy(m_Overlay.canvas.gameObject); m_Overlay = null; }
+        if (orbit != null && orbit.xrCamera != null && m_Background.a > 0f) { orbit.xrCamera.backgroundColor = m_Background; m_Background = default; }
         if (orbit != null) { orbit.ArMode = false; orbit.ArTurn = Quaternion.identity; }
         if (m_Cam != null) { m_Cam.Stop(); Destroy(m_Cam); m_Cam = null; }
         if (m_Quad != null) { Destroy(m_Quad); m_Quad = null; }
@@ -223,6 +231,23 @@ public class FourDVAR : MonoBehaviour
         DisplayXRAndroidFeature.IpdFactor = orbit.Is3D ? orbit.Strength : 0f;
         Status = $"Size {FigureScale * 100f:0}% · surface {SurfaceDrop * 100f:0} cm below";
 
+        if (m_Overlay == null)
+        {
+            // Camera image as a quad filling the rear camera's field of view, far behind the figure.
+            float qh = 2f * backgroundDistance * Mathf.Tan(m_VFov * 0.5f);
+            float qw = 2f * backgroundDistance * Mathf.Tan(m_HFov * 0.5f);
+            var qt = m_Quad.transform;
+            if (qt.parent != cam) qt.SetParent(cam, false);
+            int angle = m_Cam.videoRotationAngle;
+            bool side = angle % 180 != 0;
+            qt.localPosition = new Vector3(0f, 0f, backgroundDistance);
+            qt.localRotation = Quaternion.Euler(0f, 0f, -angle);
+            qt.localScale = side ? new Vector3(qh, qw, 1f) : new Vector3(qw, qh, 1f);
+            bool my = m_Cam.videoVerticallyMirrored;
+            m_Mat.mainTextureScale = new Vector2(1f, my ? -1f : 1f);
+            m_Mat.mainTextureOffset = new Vector2(0f, my ? 1f : 0f);
+            return;
+        }
         // Camera image (app window, under the panel): fill the screen's height, crop the sides, so its
         // vertical field of view is the rig's.
         float screenAspect = (float)Screen.width / Mathf.Max(Screen.height, 1);
