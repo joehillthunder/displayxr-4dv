@@ -14,7 +14,8 @@ using UnityEditor.XR.OpenXR.Features;
 // garbage pNext (0x8000000000 on the Nubia Pad 3D II). The runtime walks every queue create info's pNext chain
 // looking for a global-priority struct (#1905) and crashes on it (SIGSEGV in oxr_vk_create_vulkan_device).
 // This feature intercepts xrCreateVulkanDeviceKHR and hands the runtime a copy of the create info whose queue
-// infos have no pNext. Unity chains nothing there that the device needs.
+// infos have no pNext. Unity chains nothing there that the device needs. It also answers
+// xrSetAndroidApplicationThreadKHR itself (see GetProcAddr).
 #if UNITY_EDITOR
 [OpenXRFeature(UiName = "DisplayXR Android compatibility",
     BuildTargetGroups = new[] { BuildTargetGroup.Android },
@@ -38,6 +39,13 @@ public class DisplayXRAndroidFeature : OpenXRFeature
     // Kept alive for as long as native code holds their function pointers.
     static readonly GetInstanceProcAddrFn s_GetProcAddr = GetProcAddr;
     static readonly CreateVulkanDeviceFn s_CreateDevice = CreateDevice;
+    static readonly SetAndroidApplicationThreadFn s_SetThread = SetAndroidApplicationThread;
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    delegate int SetAndroidApplicationThreadFn(ulong session, int threadType, uint threadId);
+
+    [MonoPInvokeCallback(typeof(SetAndroidApplicationThreadFn))]
+    static int SetAndroidApplicationThread(ulong session, int threadType, uint threadId) => 0;   // XR_SUCCESS
 
     protected override IntPtr HookGetInstanceProcAddr(IntPtr func)
     {
@@ -49,8 +57,16 @@ public class DisplayXRAndroidFeature : OpenXRFeature
     static int GetProcAddr(ulong instance, IntPtr name, IntPtr function)
     {
         int result = s_NextGetProcAddr(instance, name, function);
-        if (result != 0 || function == IntPtr.Zero || Marshal.PtrToStringAnsi(name) != "xrCreateVulkanDeviceKHR")
+        if (result != 0 || function == IntPtr.Zero) return result;
+        string fn = Marshal.PtrToStringAnsi(name);
+        if (fn == "xrSetAndroidApplicationThreadKHR")
+        {
+            // The runtime's handler calls a null compositor hook (SIGSEGV in
+            // oxr_session_android_thread_settings). It's a scheduling hint only: accept it and do nothing.
+            Marshal.WriteIntPtr(function, Marshal.GetFunctionPointerForDelegate(s_SetThread));
             return result;
+        }
+        if (fn != "xrCreateVulkanDeviceKHR") return result;
         var next = Marshal.ReadIntPtr(function);
         if (next == IntPtr.Zero) return result;
         s_NextCreateDevice = Marshal.GetDelegateForFunctionPointer<CreateVulkanDeviceFn>(next);
