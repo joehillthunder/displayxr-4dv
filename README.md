@@ -132,7 +132,7 @@ limit) and without `Assets/StreamingAssets/GaussianAssets` (it would go into the
 
 ```bat
 Unity.exe -batchmode -quit -buildTarget Android -projectPath . -executeMethod FourDVSetup.PrepareAndroid -logFile Logs\prepare.log
-Unity.exe -batchmode -quit -buildTarget Android -projectPath . -executeMethod FourDVSetup.BuildAndroid -logFile Logsndroid.log
+Unity.exe -batchmode -quit -buildTarget Android -projectPath . -executeMethod FourDVSetup.BuildAndroid -logFile Logs\android.log
 ```
 
 `BuildAndroid` makes `Builds/Android/4DV-Viewer.apk` (`com.displayxrdemos.fourdvviewer`); `-4dv-clips a,b,c`
