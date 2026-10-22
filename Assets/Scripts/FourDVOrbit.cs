@@ -477,8 +477,26 @@ public class FourDVOrbit : MonoBehaviour
     //
     // Without the extension (an older runtime) the XR space is scaled to scene units per metre instead, and
     // the runtime's physical eyes are used as they are (no zoom-dependent depth, no strength).
+    // Unity's OpenXR plug-in locates views in a floor-level space by default; DisplayXR anchors its rig at the
+    // panel (LOCAL). The display rig's pose is given in the locate space, so use LOCAL ("device") for both.
+    bool m_OriginSet;
+    int m_OriginTries;
+
+    void SetDeviceTrackingOrigin()
+    {
+        var inputs = new System.Collections.Generic.List<UnityEngine.XR.XRInputSubsystem>();
+        SubsystemManager.GetInstances(inputs);
+        foreach (var input in inputs)
+        {
+            bool ok = input.TrySetTrackingOriginMode(UnityEngine.XR.TrackingOriginModeFlags.Device);
+            Debug.Log($"[4DV] XR tracking origin -> Device: {ok} (supported {input.GetSupportedTrackingOriginModes()})");
+            m_OriginSet |= ok;
+        }
+    }
+
     void ApplyOpenXR()
     {
+        if (!m_OriginSet && Time.frameCount % 30 == 0 && m_OriginTries++ < 10) SetDeviceTrackingOrigin();
         GetViewGeometry(out _, out _, out float viewer, out float spm);
         UpdateDepthFit();
         var t = xrSpace;
