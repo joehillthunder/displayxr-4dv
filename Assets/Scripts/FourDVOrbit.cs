@@ -513,7 +513,30 @@ public class FourDVOrbit : MonoBehaviour
         xrCamera.nearClipPlane = Mathf.Max(0.01f, toPanel - s_MaxPopOut * spm);
         xrCamera.farClipPlane = 1000f;
         if (s_Debug && Time.frameCount % 120 == 0)
-            Debug.Log($"[4DV-DBG] rig {rig} head {headPos.ToString("F3")} m, camera {c.localPosition.ToString("F2")}, height {displayHeight:0.00}, ipd {DisplayXRAndroidFeature.IpdFactor:0.00}, near {xrCamera.nearClipPlane:0.00}");
+        {
+            Debug.Log($"[4DV-DBG] rig {rig} head {headPos.ToString("F3")} m, camera {c.localPosition.ToString("F2")} world {c.position.ToString("F2")}, pivot {transform.position.ToString("F2")}, height {displayHeight:0.00}, ipd {DisplayXRAndroidFeature.IpdFactor:0.00}, near {xrCamera.nearClipPlane:0.00}");
+            LogXrViews();
+        }
+    }
+
+    // What URP renders each eye with: the XR display subsystem's view and projection for this camera.
+    void LogXrViews()
+    {
+        var displays = new System.Collections.Generic.List<UnityEngine.XR.XRDisplaySubsystem>();
+        SubsystemManager.GetInstances(displays);
+        if (displays.Count == 0 || displays[0].GetRenderPassCount() == 0) return;
+        for (int p = 0; p < displays[0].GetRenderPassCount(); p++)
+        {
+            displays[0].GetRenderPass(p, out var pass);
+            for (int i = 0; i < pass.GetRenderParameterCount(); i++)
+            {
+                pass.GetRenderParameter(xrCamera, i, out var rp);
+                var eye = rp.view.inverse;
+                var pm = rp.projection;
+                float vfov = 2f * Mathf.Atan(1f / pm.m11) * Mathf.Rad2Deg;
+                Debug.Log($"[4DV-DBG] pass {p} view {i}: eye {eye.GetColumn(3).ToString("F2")} fwd {(-(Vector3)eye.GetColumn(2)).ToString("F2")} vfov {vfov:0.0} offaxis ({pm.m02:0.00},{pm.m12:0.00}) vp {rp.viewport}");
+            }
+        }
     }
 
     Transform m_XrPanel;
