@@ -24,7 +24,8 @@ fits, the same rule as the web player, but never below 25% of natural depth. Clo
 keep full depth. Scenes that surround the performer (Badminton, Horse Walk, Rocket, Lang Lang) drop to 25–45%.
 3D strength multiplies on top: 1 = the fitted depth, 2 = double it, 0 = flat. The sidebar shows the fit,
 e.g. `1.00x · fit 25%`. Anything more than 20 cm in front of the screen is clipped. Those splats are strays
-around the capture rig, at the viewer's eye position.
+around the capture rig, at the viewer's eye position. **Fit: off** (sidebar) turns the budget off and gives
+every clip its natural depth, times the strength (up to 3x).
 
 | Input | Action |
 |---|---|
@@ -91,6 +92,80 @@ DisplayXR session has no eye tracking, a soft ring with a rotating highlight sho
 It isn't drawn by this app. `Player.log` logs `[4DV] Eye tracking ON/OFF` and samples the eye positions every
 5 s, so tracking can be checked from a normal launch.
 
+## Android (Nubia Pad 3D II, RedMagic 3D Explorer)
+
+The same app runs on Leia's Android tablets through **DisplayXR's Android runtime**, which is an OpenXR
+runtime there (`org.freedesktop.monado.openxr_runtime.out_of_process`, installed by DisplayXR's
+`install-android.sh`). The app reaches it through Unity's OpenXR plug-in and the Khronos loader. The runtime
+does the face tracking and the weave, as on Windows. Touch controls: one finger orbits, pinch zooms, two
+fingers pan, and a double tap resets the view. The toolbar (top right) stays on screen:
+
+| Button | Action |
+|---|---|
+| Depth − / + | 3D strength in steps of 0.25 (0 = flat, 1 = full; DisplayXR caps the eye spread at 1 on Android) |
+| Detail | Splat density: Auto (half below 20 fps, back to full above 40 fps at half), Full, ½, ¼ |
+| Fit | On: depth is capped to what the panel shows cleanly (the depth budget). Off: natural depth × strength |
+| AR | Tabletop AR: the performer, cropped out of the capture stage, stands on a table or the floor seen through the rear camera (details below) |
+| Menu / Hide | The sidebar |
+
+**AR.** A crop pass (4DV's per-clip FX hook, `Assets/Shaders/FourDVCrop.compute`) keeps a 0.7 m disc around the
+performer. The figure stands upright on a horizontal surface below the rear camera, facing the tablet, and is
+rendered through DisplayXR's camera rig at the rear camera's real field of view (from Camera2), so it lines
+up with the camera image. Until a tap it follows the centre of the view; then: tap or drag to place it, pinch
+to scale it (figurine to life size), two-finger drag up/down to raise or lower the surface until the feet sit
+on it, double tap to pick it up again. Tracking is turning only (3 degrees of freedom, from the gyroscope;
+the accelerometer if there's no gyroscope), not walking around, and surfaces aren't detected: full 6DoF would
+need ARCore, which doesn't list these tablets, and Unity's ARCore plug-in only renders with Vulkan (which
+4DV needs) from AR Foundation 6.1 on Unity 6. Face tracking keeps the front camera while AR uses the rear one.
+
+It ships five lighter clips: Dance, Cat, Kat Miche, Tim Talk and Dance 2, about 1 GB. Each eye renders at
+1920×1200 (the panel's 3D mode). If a clip can't hold 20 fps, the app draws every other splat.
+
+**Setting up a tablet:**
+
+1. Turn on USB debugging (Settings > About, tap Build number 7 times, then Developer options). Connect it
+   and accept "Allow USB debugging?".
+2. Install DisplayXR's runtime with its `scripts/install-android.sh` (displayxr-runtime). Use the script, not
+   a bare `adb install`: the runtime app has to be **opened once** after every install, or its OpenXR broker
+   stays unreachable and every OpenXR app fails with `XR_ERROR_RUNTIME_UNAVAILABLE`.
+3. `pwsh Tools/push-android-clips.ps1 [-Serial <adb serial>]` installs `Builds/Android/4DV-Viewer.apk`, starts
+   it once so Android creates its storage folder, and copies the clips there (4DV's plugin reads Android clip
+   data from `persistentDataPath/GaussianAssets/<clip>/`, not from the APK). Pass `-Serial` when adb lists
+   the tablet twice (USB and wireless debugging).
+
+**Building it** needs Unity 2022.3 with Android Build Support. Build from a checkout whose path is short (like
+`C:\dev\4dv-android`: package files deep in `Library/PackageCache` fail to import past Windows' 260-character
+limit) and without `Assets/StreamingAssets/GaussianAssets` (it would go into the APK):
+
+```bat
+Unity.exe -batchmode -quit -buildTarget Android -projectPath . -executeMethod FourDVSetup.PrepareAndroid -logFile Logs\prepare.log
+Unity.exe -batchmode -quit -buildTarget Android -projectPath . -executeMethod FourDVSetup.BuildAndroid -logFile Logs\android.log
+```
+
+`BuildAndroid` makes `Builds/Android/4DV-Viewer.apk` (`com.displayxrdemos.fourdvviewer`); `-4dv-clips a,b,c`
+picks other clips. `adb shell am start -n com.displayxrdemos.fourdvviewer/com.unity3d.player.UnityPlayerActivity
+-e unity "-4dv-debug"` passes command-line flags. What differs from Windows:
+
+- **Vulkan only.** 4DV's sort needs wave intrinsics, which Unity only compiles for Vulkan on Android; the sort
+  uses 4DV's `_pico` variant, their build for Snapdragon GPUs.
+- **`DisplayXRAndroidFeature`** (an OpenXR feature) declares the display rig with `XR_DXR_view_rig`
+  (virtual display height = zoom, eye spread = 3D strength × depth fit), so the runtime returns views in
+  scene units, and works around three things Unity and the runtime (v2.51–2.52) don't agree on: Unity's
+  second `xrCreateVulkanDeviceKHR` passes a queue create info with a garbage `pNext` that the runtime walks
+  and crashes on; the runtime's `xrSetAndroidApplicationThreadKHR` calls a null hook; and without
+  `XR_DXR_display_info` the runtime renders a "legacy" 0.75 view scale.
+- **The XR space** sits on the orbit pivot, in Unity's device (LOCAL) tracking origin, which is where the
+  runtime anchors the rig. The XR camera is the tracked head (Unity adds each eye's offset to it); 4DV culls
+  and sorts from `worldToCameraMatrix`, which `FourDVOrbit` points from half the nominal viewing distance, as
+  on Windows.
+- **Touch.** The runtime shows the woven image in its own in-process window, titled "DisplayXR", over the
+  app's, and it takes every touch; the app marks it not-touchable. With the XR runtime active, Unity's UI
+  canvas is 1920×1200 while touches arrive at 2560×1600, so UGUI's raycaster misses; `FourDVPanel`
+  hit-tests touches against its controls itself.
+
+Leia's own Unity plugin (LeiaUnity 3.3.2) was tried first and dropped: on this tablet its Vulkan path crashed
+in `vkCreateFramebuffer` and, once patched, produced no image, Leia's own sample included.
+
 ## Build it
 
 Needs Unity **2022.3 LTS** (4DV.ai's plugin targets URP 14) and a signed-in Unity Hub.
@@ -141,9 +216,14 @@ release zip.
 | `Packages/manifest.json` | Pins `com.displayxr.unity` to `upm/v2.26.0` and URP 14.0.12 |
 | `Assets/Scripts/FourDVPlayer.cs` | Playlist, loop modes, seeking, speed, synced audio, per-clip framing |
 | `Assets/Scripts/FourDVOrbit.cs` | Display-centric DisplayXR rig: orbit, pan, zoom, 3D strength, 2D/3D, windowed sizing |
-| `Assets/Scripts/FourDVPanel.cs` | Sidebar UI; a DisplayXR window-space layer in 3D, a screen overlay in 2D |
+| `Assets/Scripts/FourDVPanel.cs` | Sidebar UI; a DisplayXR window-space layer in 3D, a screen overlay in 2D; tablet toolbar |
+| `Assets/Scripts/FourDVAR.cs` | Android tabletop AR: crop, camera rig, placement on a surface, touch |
+| `Assets/Shaders/FourDVCrop.compute` | 4DV FX setup pass that keeps a cylinder around the performer (AR) |
 | `Assets/Editor/FourDVImport.cs` | Batch `.4dv` import through 4DV's own importer, plus audio and view sidecars |
-| `Assets/Editor/FourDVSetup.cs` | Headless project setup and Windows build |
+| `Assets/Editor/FourDVSetup.cs` | Headless project setup, Windows build, Android prepare and build |
+| `Tools/push-android-clips.ps1` | Installs the APK on a tablet and copies clip data to it over USB |
+| `Assets/Scripts/DisplayXRAndroidFeature.cs` | Android OpenXR feature: DisplayXR display rig, runtime workarounds |
+| `Assets/Plugins/Android/DisplayXRClient.androidlib/` | Manifest entries a DisplayXR Android client needs |
 
 ## Credits
 

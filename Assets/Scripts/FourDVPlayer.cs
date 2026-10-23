@@ -159,12 +159,62 @@ public class FourDVPlayer : MonoBehaviour
     }
 
     // byteFolderPath is the editor path (Assets/StreamingAssets/GaussianAssets/<clip>); map it to the player's.
+    // On Android 4DV's plugin reads from persistentDataPath instead (StreamingAssets is inside the APK, and
+    // its FirstRunInstaller copies files out of it); this app's clips are pushed there over USB
+    // (Tools/push-android-clips.ps1), so the APK stays small.
     static string DataDir(GaussianSplat4DSource s)
     {
         var p = s.GSplat4DAsset.byteFolderPath.Replace('\\', '/');
         const string marker = "StreamingAssets/";
         int i = p.IndexOf(marker, System.StringComparison.Ordinal);
-        return i >= 0 ? Path.Combine(Application.streamingAssetsPath, p.Substring(i + marker.Length)) : p;
+        string root = Application.platform == RuntimePlatform.Android ? Application.persistentDataPath : Application.streamingAssetsPath;
+        return i >= 0 ? Path.Combine(root, p.Substring(i + marker.Length)) : p;
+    }
+
+    // Splat density (4DV's DensityLOD: 0 = every splat, 1 = every other, 2 = every fourth; coarser levels grow
+    // the splats to cover). Auto, on tablets: after loading (4 s), from 2 s averages, drop to 1/2 below 20 fps,
+    // and go back to full above 40 fps at 1/2 (halving the splats roughly doubles the frame rate, so full would
+    // hold about 20). The gap between the two keeps it from flipping back and forth.
+    public enum DensityMode { Auto, Full, Half, Quarter }
+    public DensityMode Density { get; private set; } = DensityMode.Auto;
+    public int DensityLevel => Current != null ? Current.DensityLOD : 0;
+    float m_DensityHold, m_FrameSum;
+    int m_FrameCount;
+
+    public void CycleDensity()
+    {
+        Density = (DensityMode)(((int)Density + 1) % 4);
+        ApplyDensity(Current);
+        Debug.Log($"[4DV] Density {Density}");
+    }
+
+    void ApplyDensity(GaussianSplat4DSource src)
+    {
+        if (src == null) return;
+        src.DensityLOD = Density switch { DensityMode.Half => 1, DensityMode.Quarter => 2, _ => 0 };
+        m_DensityHold = UnityEngine.Time.unscaledTime + 4f;   // loading the first segment stalls a few frames
+        m_FrameSum = 0f;
+        m_FrameCount = 0;
+    }
+
+    void AdaptDensity()
+    {
+        var src = Current;
+        if (!Application.isMobilePlatform || src == null || Density != DensityMode.Auto) return;
+        if (UnityEngine.Time.unscaledTime < m_DensityHold) { m_FrameSum = 0f; m_FrameCount = 0; return; }
+        m_FrameSum += UnityEngine.Time.unscaledDeltaTime;
+        m_FrameCount++;
+        if (m_FrameSum < 2f) return;
+        float fps = m_FrameCount / m_FrameSum;
+        m_FrameSum = 0f;
+        m_FrameCount = 0;
+        int level = src.DensityLOD;
+        if (level == 0 && fps < 20f) level = 1;
+        else if (level == 1 && fps > 40f) level = 0;
+        if (level == src.DensityLOD) return;
+        src.DensityLOD = level;
+        m_DensityHold = UnityEngine.Time.unscaledTime + 2f;
+        Debug.Log($"[4DV] {src.GSplat4DAsset.name}: {fps:0} fps, density 1/{1 << level}");
     }
 
     void Update()
@@ -196,6 +246,7 @@ public class FourDVPlayer : MonoBehaviour
         }
         src.currentProgressTime = m_Time;
         SyncAudio();
+        AdaptDensity();
     }
 
     // ---- controls (keyboard and FourDVPanel) ----
@@ -206,6 +257,7 @@ public class FourDVPlayer : MonoBehaviour
         if (Current != null) Current.gameObject.SetActive(false);
         m_Index = ((index % m_Available.Count) + m_Available.Count) % m_Available.Count;
         Current.gameObject.SetActive(true);
+        ApplyDensity(Current);
         m_Time = 0f;
         Debug.Log($"[4DV] Playing {Current.GSplat4DAsset.name} ({m_Index + 1}/{m_Available.Count})");
 
@@ -223,6 +275,17 @@ public class FourDVPlayer : MonoBehaviour
     readonly Dictionary<string, Vector3[]> m_DepthCache = new Dictionary<string, Vector3[]>();
 
     Vector3[] DepthSamples(GaussianSplat4DSource src)
+    {
+        var local = LocalSamples(src);
+        if (local == null) return null;
+        var m = src.transform.localToWorldMatrix;
+        var world = new Vector3[local.Length];
+        for (int i = 0; i < local.Length; i++) world[i] = m.MultiplyPoint3x4(local[i]);
+        return world;
+    }
+
+    // The same chunk centres in the clip's own space (FourDVAR finds the performer from them).
+    public Vector3[] LocalSamples(GaussianSplat4DSource src)
     {
         string name = src.GSplat4DAsset.name;
         if (!m_DepthCache.TryGetValue(name, out var local))
@@ -250,11 +313,7 @@ public class FourDVPlayer : MonoBehaviour
             catch (System.Exception e) { Debug.LogWarning($"[4DV] {name}: no depth samples ({e.Message})"); }
             m_DepthCache[name] = local;
         }
-        if (local == null) return null;
-        var m = src.transform.localToWorldMatrix;
-        var world = new Vector3[local.Length];
-        for (int i = 0; i < local.Length; i++) world[i] = m.MultiplyPoint3x4(local[i]);
-        return world;
+        return local;
     }
 
     public void Next() => Select(m_Index + 1);
@@ -298,7 +357,7 @@ public class FourDVPlayer : MonoBehaviour
         {
             var path = Path.Combine(DataDir(src), "audio.mp3");
             if (!File.Exists(path)) yield break;
-            using var req = UnityWebRequestMultimedia.GetAudioClip("file:///" + path.Replace('\\', '/'), AudioType.MPEG);
+            using var req = UnityWebRequestMultimedia.GetAudioClip(new System.Uri(path).AbsoluteUri, AudioType.MPEG);
             yield return req.SendWebRequest();
             if (req.result != UnityWebRequest.Result.Success) { Debug.LogWarning($"[4DV] {name} audio: {req.error}"); yield break; }
             clip = DownloadHandlerAudioClip.GetContent(req);

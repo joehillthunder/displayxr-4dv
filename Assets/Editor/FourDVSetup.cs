@@ -13,6 +13,11 @@ using UnityEngine.XR.Management;
 // Headless project setup and build. Idempotent; safe to re-run after importing new clips.
 //   Unity.exe -batchmode -quit -projectPath . -executeMethod FourDVSetup.Setup
 //   Unity.exe -batchmode -quit -projectPath . -executeMethod FourDVSetup.Build
+//
+// Android (Nubia Pad 3D II / RedMagic 3D, through DisplayXR's Android OpenXR runtime), two runs because the
+// first one changes what compiles:
+//   Unity.exe -batchmode -quit -buildTarget Android -projectPath . -executeMethod FourDVSetup.PrepareAndroid
+//   Unity.exe -batchmode -quit -buildTarget Android -projectPath . -executeMethod FourDVSetup.BuildAndroid [-4dv-clips a,b,c]
 public static class FourDVSetup
 {
     const string kScenePath = "Assets/Scenes/4DVViewer.unity";
@@ -20,22 +25,28 @@ public static class FourDVSetup
     const string kPipelinePath = "Assets/Settings/URP-Pipeline.asset";
     const string kRendererPath = "Assets/Settings/URP-Renderer.asset";
     const string kProductName = "4DV Viewer";
+    public const string kAndroidId = "com.displayxrdemos.fourdvviewer";
+    // The lighter clips for a tablet (88-353 MB each, about 1 GB together); `-4dv-clips a,b,c` overrides.
+    static readonly string[] kAndroidClips = { "dance_sample.c", "cat_high", "Kat_Miche_10s_150w", "TimTalk_iPhone17", "dance2" };
 
     [MenuItem("4DV/Set Up Project")]
-    public static void Setup()
+    public static void Setup() => Setup(EditorUserBuildSettings.activeBuildTarget == BuildTarget.Android);
+
+    static void Setup(bool android)
     {
-        SetupRenderPipeline();
+        SetupRenderPipeline(android);
         SetupXR();
         SetupPlayer();
-        BuildScene();
+        if (android) SetupAndroidPlayer();
+        BuildScene(android);
         AssetDatabase.SaveAssets();
-        Debug.Log("[4DV] Setup complete");
+        Debug.Log($"[4DV] Setup complete ({(android ? "Android" : "Windows")})");
     }
 
     [MenuItem("4DV/Build Windows Player")]
     public static void Build()
     {
-        Setup();
+        Setup(false);
         var outDir = Path.GetFullPath("Builds/Win64/4DV-Viewer");
         Directory.CreateDirectory(outDir);
         var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
@@ -50,6 +61,88 @@ public static class FourDVSetup
         Debug.Log($"[4DV] Build {report.summary.result}: {report.summary.outputPath}");
         if (Application.isBatchMode && report.summary.result != UnityEditor.Build.Reporting.BuildResult.Succeeded)
             EditorApplication.Exit(1);
+    }
+
+    // ---- Android ----
+
+    // Android defines, then the switch to Android. Scripts recompile after this returns, so the build is a
+    // second run. DISPLAYXR_NO_SPLASH: DisplayXR's boot splash rig is for its desktop provider; on Android it
+    // would add a second camera.
+    [MenuItem("4DV/Android/1. Prepare")]
+    public static void PrepareAndroid()
+    {
+        var target = UnityEditor.Build.NamedBuildTarget.Android;
+        var defines = PlayerSettings.GetScriptingDefineSymbols(target).Split(';')
+            .Where(d => d.Length > 0 && d != "FOURDV_LEIA" && d != "LEIA_URP_DETECTED").ToList();
+        if (!defines.Contains("DISPLAYXR_NO_SPLASH")) defines.Add("DISPLAYXR_NO_SPLASH");
+        PlayerSettings.SetScriptingDefineSymbols(target, string.Join(";", defines));
+        if (EditorUserBuildSettings.activeBuildTarget != BuildTarget.Android)
+            EditorUserBuildSettings.SwitchActiveBuildTarget(BuildTargetGroup.Android, BuildTarget.Android);
+        AssetDatabase.SaveAssets();
+        Debug.Log("[4DV] Android prepared; now run FourDVSetup.BuildAndroid");
+    }
+
+    [MenuItem("4DV/Android/2. Build APK")]
+    public static void BuildAndroid()
+    {
+#if !DISPLAYXR_NO_SPLASH
+        Fail("Android defines aren't set for this editor session: run FourDVSetup.PrepareAndroid first, and pass -buildTarget Android.");
+#else
+        // Clip data goes to the tablet over USB (Tools/push-android-clips.ps1), never into the APK.
+        if (Directory.Exists("Assets/StreamingAssets/GaussianAssets"))
+            Fail("Assets/StreamingAssets/GaussianAssets would be packed into the APK (gigabytes). Build Android from a checkout without it.");
+        Setup(true);
+        var outDir = Path.GetFullPath("Builds/Android");
+        Directory.CreateDirectory(outDir);
+        EditorUserBuildSettings.buildAppBundle = false;
+        var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
+        {
+            scenes = new[] { kScenePath },
+            locationPathName = Path.Combine(outDir, "4DV-Viewer.apk"),
+            target = BuildTarget.Android,
+            options = BuildOptions.None,
+        });
+        Debug.Log($"[4DV] Build {report.summary.result}: {report.summary.outputPath}");
+        if (Application.isBatchMode && report.summary.result != UnityEditor.Build.Reporting.BuildResult.Succeeded)
+            EditorApplication.Exit(1);
+#endif
+    }
+
+    // Vulkan only: 4DV's GPU sort needs wave intrinsics, which Unity only compiles for Vulkan on Android, and
+    // DisplayXR's Android compositor is Vulkan. ARM64 + IL2CPP, API 29+.
+    static void SetupAndroidPlayer()
+    {
+        PlayerSettings.SetApplicationIdentifier(BuildTargetGroup.Android, kAndroidId);
+        PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.Android, false);
+        PlayerSettings.SetGraphicsAPIs(BuildTarget.Android, new[] { GraphicsDeviceType.Vulkan });
+        PlayerSettings.SetScriptingBackend(BuildTargetGroup.Android, ScriptingImplementation.IL2CPP);
+        PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;
+        PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel29;
+        PlayerSettings.Android.minifyRelease = false;
+        PlayerSettings.Android.minifyDebug = false;
+        PlayerSettings.Android.minifyWithR8 = false;
+        PlayerSettings.defaultInterfaceOrientation = UIOrientation.AutoRotation;
+        PlayerSettings.allowedAutorotateToLandscapeLeft = true;
+        PlayerSettings.allowedAutorotateToLandscapeRight = true;
+        PlayerSettings.allowedAutorotateToPortrait = false;
+        PlayerSettings.allowedAutorotateToPortraitUpsideDown = false;
+        // Edge to edge: no status or navigation bar over the clip.
+        PlayerSettings.Android.startInFullscreen = true;
+        PlayerSettings.Android.renderOutsideSafeArea = true;
+    }
+
+    static string ArgValue(string name)
+    {
+        var args = Environment.GetCommandLineArgs();
+        int i = Array.IndexOf(args, name);
+        return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
+    }
+
+    static void Fail(string message)
+    {
+        Debug.LogError("[4DV] " + message);
+        if (Application.isBatchMode) EditorApplication.Exit(1);
+        throw new Exception(message);
     }
 
     // Without <Data>/UnitySubsystems/DisplayXR/UnitySubsystemsManifest.json the DisplayXR display provider never
@@ -76,7 +169,7 @@ public static class FourDVSetup
         }
     }
 
-    static void SetupRenderPipeline()
+    static void SetupRenderPipeline(bool android)
     {
         Directory.CreateDirectory("Assets/Settings");
         var renderer = AssetDatabase.LoadAssetAtPath<UniversalRendererData>(kRendererPath);
@@ -124,7 +217,8 @@ public static class FourDVSetup
             Slot("GS4DShader", "GaussianSplat4D.shader");
             Slot("CompositeShader", "DepthAwareComposite.shader");
             Slot("splatComputeShader", "GaussianSplat4D.compute");
-            Slot("dvr", "DeviceRadixSort.compute");          // the _pico variant is for Pico headsets
+            // The _pico variant is 4DV's build for Snapdragon (Adreno) headsets; the Nubia and RedMagic tablets are Snapdragon too.
+            Slot("dvr", android ? "DeviceRadixSort_pico.compute" : "DeviceRadixSort.compute");
             Slot("GSDepthStencil", "GSDepthStencil.shader");
             fso.ApplyModifiedProperties();
             EditorUtility.SetDirty(f);
@@ -173,6 +267,32 @@ public static class FourDVSetup
         EditorUtility.SetDirty(perTarget);
         EditorUtility.SetDirty(general);
         EditorUtility.SetDirty(manager);
+
+        // Android: DisplayXR's runtime is an OpenXR runtime there, found by the Khronos loader Unity's OpenXR
+        // package ships (manifest entries in Plugins/Android/DisplayXRClient.androidlib). Multi-pass: each eye
+        // renders as its own camera pass, so 4DV's plugin culls and sorts per eye.
+        if (!perTarget.HasSettingsForBuildTarget(BuildTargetGroup.Android))
+            perTarget.CreateDefaultSettingsForBuildTarget(BuildTargetGroup.Android);
+        if (!perTarget.HasManagerSettingsForBuildTarget(BuildTargetGroup.Android))
+            perTarget.CreateDefaultManagerSettingsForBuildTarget(BuildTargetGroup.Android);
+        var android = perTarget.SettingsForBuildTarget(BuildTargetGroup.Android);
+        android.InitManagerOnStart = true;
+        XRPackageMetadataStore.RemoveLoader(android.Manager, "DisplayXR.DisplayXRDisplayLoader", BuildTargetGroup.Android);
+        XRPackageMetadataStore.AssignLoader(android.Manager, "UnityEngine.XR.OpenXR.OpenXRLoader", BuildTargetGroup.Android);
+        var openxr = UnityEngine.XR.OpenXR.OpenXRSettings.GetSettingsForBuildTargetGroup(BuildTargetGroup.Android);
+        if (openxr != null)
+        {
+            openxr.renderMode = UnityEngine.XR.OpenXR.OpenXRSettings.RenderMode.MultiPass;
+            // DisplayXRAndroidFeature: works around the runtime crashing on Unity's Vulkan device create info.
+            UnityEditor.XR.OpenXR.Features.FeatureHelpers.RefreshFeatures(BuildTargetGroup.Android);
+            var compat = openxr.GetFeature<DisplayXRAndroidFeature>();
+            if (compat == null) Fail("DisplayXRAndroidFeature isn't registered with OpenXR for Android");
+            compat.enabled = true;
+            EditorUtility.SetDirty(compat);
+            EditorUtility.SetDirty(openxr);
+        }
+        EditorUtility.SetDirty(android);
+        EditorUtility.SetDirty(android.Manager);
     }
 
     static void SetupPlayer()
@@ -200,7 +320,7 @@ public static class FourDVSetup
         }
     }
 
-    static void BuildScene()
+    static void BuildScene(bool android)
     {
         Directory.CreateDirectory("Assets/Scenes");
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
@@ -211,21 +331,57 @@ public static class FourDVSetup
         // 4DV captures put the performer at the origin facing -Z, inside a ~3.5 m ring of camera stands;
         // this default view sits inside the ring so no stands block it.
         pivot.transform.position = new Vector3(0f, 0.95f, 0f);
-        // Camera and DisplayXRDisplay on one object, as in DisplayXR's samples: its 2D fallback and
-        // per-camera hooks look for the Camera on the display's own GameObject.
-        var camGo = new GameObject("Main Camera") { tag = "MainCamera" };
-        camGo.transform.SetParent(pivot.transform, false);
-        var cam = camGo.AddComponent<Camera>();
-        cam.clearFlags = CameraClearFlags.SolidColor;
-        cam.backgroundColor = new Color(0.02f, 0.03f, 0.05f);
-        cam.nearClipPlane = 0.05f;
-        cam.farClipPlane = 1000f;
-        camGo.AddComponent<UniversalAdditionalCameraData>();
-        var display = camGo.AddComponent<DisplayXR.DisplayXRDisplay>();
-
         var orbit = pivot.AddComponent<FourDVOrbit>();
-        orbit.display = display;
-        orbit.fallbackCamera = cam;
+        if (android)
+        {
+            // DisplayXR's Android runtime through Unity's OpenXR: the display rig's frame on the pivot, and the
+            // XR camera in it.
+            var space = new GameObject("XR Space");
+            space.transform.SetParent(pivot.transform, false);
+            var camGo = new GameObject("XR Camera") { tag = "MainCamera" };
+            camGo.transform.SetParent(space.transform, false);
+            camGo.transform.localPosition = new Vector3(0f, 0f, -0.45f);
+            var cam = camGo.AddComponent<Camera>();
+            cam.clearFlags = CameraClearFlags.SolidColor;
+            cam.backgroundColor = FourDVOrbit.Background;
+            cam.nearClipPlane = 0.05f;
+            cam.farClipPlane = 1000f;
+            cam.stereoTargetEye = StereoTargetEyeMask.Both;
+            camGo.AddComponent<UniversalAdditionalCameraData>();
+            // No TrackedPoseDriver: the runtime's eye poses drive rendering, and FourDVOrbit places this object
+            // (4DV's culling viewpoint) at the tracked head scaled into the display rig.
+            orbit.xrSpace = space.transform;
+            orbit.xrCamera = cam;
+
+            // AR: rear-camera image behind the clip, gyroscope placement (FourDVAR).
+            const string kArMaterialPath = "Assets/Settings/AR-CameraImage.mat";
+            var arMat = AssetDatabase.LoadAssetAtPath<Material>(kArMaterialPath);
+            if (arMat == null)
+            {
+                arMat = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
+                AssetDatabase.CreateAsset(arMat, kArMaterialPath);
+            }
+            var ar = pivot.AddComponent<FourDVAR>();
+            ar.orbit = orbit;
+            ar.backgroundMaterial = arMat;
+            ar.cropShader = AssetDatabase.LoadAssetAtPath<ComputeShader>("Assets/Shaders/FourDVCrop.compute");
+            if (ar.cropShader == null) Fail("Assets/Shaders/FourDVCrop.compute not found");
+        }
+        else
+        {
+            // Camera and DisplayXRDisplay on one object, as in DisplayXR's samples: its 2D fallback and
+            // per-camera hooks look for the Camera on the display's own GameObject.
+            var camGo = new GameObject("Main Camera") { tag = "MainCamera" };
+            camGo.transform.SetParent(pivot.transform, false);
+            var cam = camGo.AddComponent<Camera>();
+            cam.clearFlags = CameraClearFlags.SolidColor;
+            cam.backgroundColor = FourDVOrbit.Background;
+            cam.nearClipPlane = 0.05f;
+            cam.farClipPlane = 1000f;
+            camGo.AddComponent<UniversalAdditionalCameraData>();
+            orbit.display = camGo.AddComponent<DisplayXR.DisplayXRDisplay>();
+            orbit.fallbackCamera = cam;
+        }
 
         var managerGo = new GameObject("GSManager");
         AddComponentByName(managerGo, "GaussianSplat4D.Runtime.GaussianSplat4DManager");
@@ -246,6 +402,11 @@ public static class FourDVSetup
             .Select(p => AssetDatabase.LoadAssetAtPath(p, assetType))
             .Where(a => a != null)
             .ToArray();
+        if (android)
+        {
+            var keep = ArgValue("-4dv-clips")?.Split(',') ?? kAndroidClips;
+            clips = clips.Where(c => keep.Contains(c.name)).ToArray();
+        }
         if (clips.Length == 0)
             Debug.LogWarning($"[4DV] No clips in {kClipFolder}. Import a .4dv with the 4DV importer, then re-run setup.");
 

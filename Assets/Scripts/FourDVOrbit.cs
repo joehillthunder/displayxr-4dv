@@ -16,10 +16,29 @@ using UnityEngine.InputSystem;
 // With the DisplayXR provider running, the woven image is shown in a separate window that Unity's Input
 // System doesn't get clicks from, so buttons come from the provider's window (displayxr_get_overlay_pointer)
 // and motion from Raw Input deltas, the same approach as DisplayXR's DefaultInputController sample.
+//
+// Android (Nubia Pad 3D II / RedMagic 3D): DisplayXR's Android runtime is an OpenXR runtime, reached through
+// Unity's OpenXR plug-in (the DisplayXR Unity package has no Android plug-in):
+//
+//   Orbit Pivot (this)
+//     XR Space (xrSpace)                           on the pivot, scaled to scene units per metre: the panel
+//       XR Camera (xrCamera)                       the runtime's tracked head pose, metres in front of it
+//
+// Touch:  one finger orbit · pinch zoom · two-finger drag pan · double tap reset view
 public class FourDVOrbit : MonoBehaviour
 {
     public DisplayXRDisplay display;
     public Camera fallbackCamera;
+    public Transform xrSpace;               // Android (OpenXR): the panel's frame
+    public Camera xrCamera;
+    // Where DisplayXR's Android runtime puts the panel centre in its tracking space (its rig origin, a standing
+    // eye height; it logs "Rig source ... armed at (0.000, 1.600, 0.000)"), and the panel's size (its
+    // display_info: 0.2600 x 0.1630 m on the Nubia Pad 3D II; Android's reported 320 dpi would say 0.127 m).
+    public Vector3 xrPanelOrigin = new Vector3(0f, 1.6f, 0f);
+    public Vector2 xrPanelSize = new Vector2(0.26f, 0.163f);
+    public float xrNominalViewer = 0.5f;    // metres; the runtime's display_info nominal z
+
+    public static readonly Color Background = new Color(0.02f, 0.03f, 0.05f);
 
     [Header("View")]
     public float displayHeight = 2.0f;      // metres of scene shown top-to-bottom; smaller = zoomed in
@@ -28,13 +47,22 @@ public class FourDVOrbit : MonoBehaviour
 
     [Header("Input")]
     public float orbitSpeed = 0.25f;        // degrees per pixel
+    public float touchOrbitSpeed = 0.15f;   // degrees per pixel of finger travel
     public float zoomStep = 0.12f;          // fraction per wheel notch
     public float autoTurnSpeed = 12f;       // degrees per second
 
-    public const float MaxStrength = 2f;
-    public float Strength { get; set; } = 1f;   // times DepthFit = DisplayXRDisplay.ipdFactor: 0 = flat, 2 = exaggerated
+    public const float MaxStrength = 3f;
+    public float Strength { get; set; } = 1f;   // times DepthFit = DisplayXRDisplay.ipdFactor: 0 = flat, 3 = exaggerated
     public bool Is3D { get; private set; } = true;
     public bool AutoTurn { get; set; }
+    // Off: natural depth for every clip (Strength alone), even where the panel shows double edges.
+    public bool FitDepth { get; set; } = true;
+
+    // AR (FourDVAR): the screen turns about the viewer's eyes by ArTurn, the tablet's own turn since the clip
+    // was placed, so the clip stays put in the room while the camera image behind it moves with the tablet.
+    public bool ArMode { get; set; }
+    public Quaternion ArTurn { get; set; } = Quaternion.identity;
+    public event Action ViewReset;
 
     // Stereo depth budget (same rule as the web player): the largest screen disparity, as a fraction of the
     // panel's width, that the 5th- and 95th-percentile depths in view may reach at Strength 1. Past about 1%
@@ -83,6 +111,11 @@ public class FourDVOrbit : MonoBehaviour
         m_DefaultHeight = Arg("-4dv-height", 1, displayHeight);
         UseDefaultHome();
         ScheduleScreenshotFromArgs();
+#if UNITY_ANDROID && !UNITY_EDITOR
+        // The runtime's face tracker opens the front camera from this process (DisplayXR's client template).
+        if (xrSpace != null && !UnityEngine.Android.Permission.HasUserAuthorizedPermission(UnityEngine.Android.Permission.Camera))
+            UnityEngine.Android.Permission.RequestUserPermission(UnityEngine.Android.Permission.Camera);
+#endif
         DisplayXRProvider.EyeTrackingStateChanged += (tracked, mode) =>
             Debug.Log($"[4DV] Eye tracking {(tracked ? "ON" : "OFF")} (mode {mode})");
     }
@@ -140,6 +173,7 @@ public class FourDVOrbit : MonoBehaviour
         m_Pitch = m_HomePitch;
         displayHeight = m_HomeHeight;
         Apply();
+        ViewReset?.Invoke();
     }
 
     // ---- 3D controls (keyboard and FourDVPanel) ----
@@ -171,7 +205,7 @@ public class FourDVOrbit : MonoBehaviour
             }
             Debug.Log($"[4DV-DBG] content p10/median/p90 x {Axis(0)} y {Axis(1)} z {Axis(2)}");
         }
-        DepthFit = m_DepthTarget = MeasureDepthFit();
+        DepthFit = m_DepthTarget = FitDepth ? MeasureDepthFit() : 1f;
     }
 
     // How much of the scene's natural depth fits the budget from the current view, re-measured four times a
@@ -181,16 +215,24 @@ public class FourDVOrbit : MonoBehaviour
         if (UnityEngine.Time.unscaledTime >= m_NextDepthCheck)
         {
             m_NextDepthCheck = UnityEngine.Time.unscaledTime + 0.25f;
-            m_DepthTarget = MeasureDepthFit();
+            m_DepthTarget = FitDepth ? MeasureDepthFit() : 1f;
         }
         DepthFit = Mathf.MoveTowards(DepthFit, m_DepthTarget, UnityEngine.Time.unscaledDeltaTime);
     }
 
     // Physical size of the woven area (the window, scaled from the panel) and the nominal viewing distance.
-    static void PanelGeometry(out float panelW, out float physW, out float physH, out float viewer)
+    void PanelGeometry(out float panelW, out float physW, out float physH, out float viewer)
     {
         panelW = 0.3444f; float panelH = 0.2153f; viewer = 0.6f;
         physW = panelW; physH = panelH;
+        if (xrSpace != null)
+        {
+            // The viewing distance is the tracked head's, from the panel (metres).
+            physW = panelW = xrPanelSize.x;
+            physH = xrPanelSize.y;
+            viewer = xrNominalViewer;
+            return;
+        }
         if (DisplayXRProvider.TryGetDisplayInfo(out var info) && info.widthM > 0f && info.heightM > 0f)
         {
             panelW = info.widthM; panelH = info.heightM;
@@ -295,6 +337,7 @@ public class FourDVOrbit : MonoBehaviour
             float perPixel = displayHeight / Mathf.Max(Screen.height, 1);
             transform.position += transform.rotation * new Vector3(-d.x, -d.y, 0f) * perPixel;
         }
+        if (Application.isMobilePlatform) UpdateTouch();
         if (AutoTurn) m_Yaw += autoTurnSpeed * Time.deltaTime;
 
         // zoom
@@ -318,10 +361,12 @@ public class FourDVOrbit : MonoBehaviour
             if (kb.iKey.wasPressedThisFrame) DisplayXRScreenshot.Capture();
             if (kb.escapeKey.wasPressedThisFrame) Application.Quit();
         }
+#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN || UNITY_STANDALONE_LINUX
         // the woven window's close button / Alt+F4 arrive as a native request
         try { if (DisplayXRNative.displayxr_consume_overlay_close_request() != 0) Application.Quit(); }
         catch (EntryPointNotFoundException) { }
         catch (DllNotFoundException) { }
+#endif
 
         Apply();
         LogEyes();
@@ -337,9 +382,66 @@ public class FourDVOrbit : MonoBehaviour
 
     static readonly bool s_Debug = Array.IndexOf(Environment.GetCommandLineArgs(), "-4dv-debug") >= 0;
 
+    // ---- touch (tablet) ----
+
+    int m_PrevTouches;
+    bool m_TouchOnUi;
+    Vector2 m_PinchMid;
+    float m_PinchDist;
+
+    // One finger orbits; two fingers pinch to zoom and drag to pan; a double tap resets the view. A gesture
+    // that starts on the panel belongs to the panel.
+    void UpdateTouch()
+    {
+        if (ArMode) return;   // FourDVAR handles touch in AR (place, move, scale)
+        var ts = Touchscreen.current;
+        if (ts == null) return;
+        int n = 0;
+        Vector2 p0 = default, p1 = default, d0 = default;
+        foreach (var t in ts.touches)
+        {
+            if (!t.isInProgress) continue;
+            if (n == 0) { p0 = t.position.ReadValue(); d0 = t.delta.ReadValue(); }
+            else if (n == 1) p1 = t.position.ReadValue();
+            n++;
+        }
+        if (n == 0) { m_PrevTouches = 0; m_TouchOnUi = false; return; }
+        if (m_PrevTouches == 0)
+        {
+            m_TouchOnUi = FourDVPanel.HitsUi(p0);
+            if (s_Debug)
+                Debug.Log($"[4DV-DBG] touch at {p0} (screen {Screen.width}x{Screen.height}), over UI {m_TouchOnUi}, event system {EventSystem.current?.name} module {EventSystem.current?.currentInputModule?.GetType().Name}");
+        }
+        if (m_TouchOnUi) { m_PrevTouches = n; return; }
+
+        if (ts.primaryTouch.tap.wasPressedThisFrame && ts.primaryTouch.tapCount.ReadValue() >= 2) ResetView();
+        if (n == 1 && m_PrevTouches == 1)
+        {
+            m_Yaw += d0.x * touchOrbitSpeed;
+            m_Pitch = Mathf.Clamp(m_Pitch - d0.y * touchOrbitSpeed, -80f, 80f);
+            if (d0.sqrMagnitude > 0f) AutoTurn = false;
+        }
+        else if (n >= 2)
+        {
+            Vector2 mid = (p0 + p1) * 0.5f;
+            float dist = (p0 - p1).magnitude;
+            if (m_PrevTouches >= 2 && m_PinchDist > 1f)
+            {
+                displayHeight = Mathf.Clamp(displayHeight * m_PinchDist / Mathf.Max(dist, 1f), minHeight, maxHeight);
+                Vector2 dm = mid - m_PinchMid;
+                float perPixel = displayHeight / Mathf.Max(Screen.height, 1);
+                transform.position += transform.rotation * new Vector3(-dm.x, -dm.y, 0f) * perPixel;
+            }
+            m_PinchMid = mid;
+            m_PinchDist = dist;
+        }
+        m_PrevTouches = n;
+    }
+
     void Apply()
     {
         transform.rotation = Quaternion.Euler(m_Pitch, m_Yaw, 0f);
+        if (xrSpace != null) { ApplyOpenXR(); return; }
         if (display == null) return;
         display.virtualDisplayHeight = displayHeight;
         UpdateDepthFit();
@@ -363,6 +465,179 @@ public class FourDVOrbit : MonoBehaviour
             ? new Vector3(0f, 0f, -d) : Vector3.zero;
     }
 
+    // DisplayXR's Android runtime (an OpenXR runtime) computes the views. With XR_DXR_view_rig the app declares
+    // a display rig (DisplayXRAndroidFeature): the virtual display at the XR space's origin, displayHeight tall,
+    // eye spread Strength x DepthFit, and the runtime returns eye poses and off-axis projections in scene units,
+    // as DisplayXR does on Windows. The XR space sits on the pivot, so the display plane passes through the
+    // performer. Unity renders each eye from those poses; the camera object only matters to 4DV's plugin, which
+    // culls and sorts from it, so it's put at the tracked head, scaled into the rig.
+    //
+    // Without the extension (an older runtime) the XR space is scaled to scene units per metre instead, and
+    // the runtime's physical eyes are used as they are (no zoom-dependent depth, no strength).
+    // Unity's OpenXR plug-in locates views in a floor-level space by default; DisplayXR anchors its rig at the
+    // panel (LOCAL). The display rig's pose is given in the locate space, so use LOCAL ("device") for both.
+    bool m_OriginSet;
+    int m_OriginTries;
+
+    void SetDeviceTrackingOrigin()
+    {
+        var inputs = new System.Collections.Generic.List<UnityEngine.XR.XRInputSubsystem>();
+        SubsystemManager.GetInstances(inputs);
+        foreach (var input in inputs)
+        {
+            bool ok = input.TrySetTrackingOriginMode(UnityEngine.XR.TrackingOriginModeFlags.Device);
+            Debug.Log($"[4DV] XR tracking origin -> Device: {ok} (supported {input.GetSupportedTrackingOriginModes()})");
+            m_OriginSet |= ok;
+        }
+    }
+
+    void ApplyOpenXR()
+    {
+        if (!m_OriginSet && Time.frameCount % 30 == 0 && m_OriginTries++ < 10) SetDeviceTrackingOrigin();
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (!m_TouchPassThrough && Time.frameCount % 60 == 0 && m_TouchTries++ < 30) PassTouchesThroughRuntimeWindow();
+#endif
+        if (ArMode && DisplayXRAndroidFeature.ViewRigActive && xrCamera != null)
+        {
+            // AR: FourDVAR poses the XR space (the rear camera, gravity-aligned) and the clip; the camera rig
+            // gives real-metre eyes, so 4DV culls from the camera itself.
+            xrCamera.transform.localPosition = Vector3.zero;
+            xrCamera.transform.localRotation = Quaternion.identity;
+            xrCamera.ResetWorldToCameraMatrix();
+            xrCamera.nearClipPlane = 0.02f;
+            xrCamera.farClipPlane = 100f;
+            return;
+        }
+        GetViewGeometry(out _, out _, out float viewer, out float spm);
+        UpdateDepthFit();
+        var t = xrSpace;
+        bool rig = DisplayXRAndroidFeature.ViewRigActive;
+        t.localScale = rig ? Vector3.one : Vector3.one * spm;
+        t.localRotation = Quaternion.identity;
+        var origin = Vector3.zero;
+        if (ArMode)
+        {
+            // Turn the panel about the nominal eye point, not the pivot.
+            var eye = new Vector3(0f, 0f, -viewer * spm);
+            t.localRotation = ArTurn;
+            origin = eye - ArTurn * eye;
+        }
+        t.localPosition = rig ? origin : origin - t.localRotation * (xrPanelOrigin * spm);
+        DisplayXRAndroidFeature.Height = displayHeight;
+        DisplayXRAndroidFeature.IpdFactor = Is3D ? Mathf.Min(Strength * DepthFit, 1f) : 0f;
+        if (xrCamera == null) return;
+
+        var head = UnityEngine.XR.InputDevices.GetDeviceAtXRNode(UnityEngine.XR.XRNode.CenterEye);
+        Vector3 headPos = Vector3.zero;   // device space: the tracked head (the runtime anchors it at the panel)
+        if (head.isValid) head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.centerEyePosition, out headPos);
+        var c = xrCamera.transform;
+        c.localRotation = Quaternion.identity;
+        // Unity renders each eye at this transform plus the eye's offset from the tracked head, so the camera
+        // must be the tracked head itself (with the rig, the runtime's eye offsets are already in scene units).
+        // 4DV's plugin culls and sorts from worldToCameraMatrix, which XR rendering doesn't use: point that
+        // from the nominal viewer in front of the display, as ApplySplatViewpoint does on Windows.
+        c.localPosition = headPos;
+        var panel = ScreenTransform;
+        float viewerUnits = viewer * spm;
+        // Measured from s_SplatViewDistance x the viewing distance, which halves 4DV's blur floor (see
+        // ApplySplatViewpoint).
+        Vector3 nominal = panel.position - panel.forward * (viewerUnits * s_SplatViewDistance);
+        xrCamera.worldToCameraMatrix = Matrix4x4.Scale(new Vector3(1f, 1f, -1f)) *
+                                       Matrix4x4.TRS(nominal, panel.rotation, Vector3.one).inverse;
+
+        // Clip anything more than s_MaxPopOut in front of the panel: see ApplyNearClip.
+        xrCamera.nearClipPlane = Mathf.Max(0.01f, viewerUnits - s_MaxPopOut * spm);
+        xrCamera.farClipPlane = 1000f;
+        if (s_Debug && Time.frameCount % 120 == 0)
+        {
+            Debug.Log($"[4DV-DBG] rig {rig} head {headPos.ToString("F3")} m, camera {c.localPosition.ToString("F2")} world {c.position.ToString("F2")}, pivot {transform.position.ToString("F2")}, height {displayHeight:0.00}, ipd {DisplayXRAndroidFeature.IpdFactor:0.00}, near {xrCamera.nearClipPlane:0.00}");
+            LogXrViews();
+        }
+    }
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+    // DisplayXR's runtime (running in this process) shows the woven image in its own full-screen window,
+    // titled "DisplayXR", on top of the app's, and that window takes every touch: the panel and the app's
+    // orbit/pinch never get any. Mark it FLAG_NOT_TOUCHABLE so touches fall through to the app's window
+    // (the runtime's own touch navigation stops; the app's replaces it).
+    bool m_TouchPassThrough;
+    int m_TouchTries;
+
+    void PassTouchesThroughRuntimeWindow()
+    {
+        var activity = new AndroidJavaClass("com.unity3d.player.UnityPlayer").GetStatic<AndroidJavaObject>("currentActivity");
+        activity.Call("runOnUiThread", new AndroidJavaRunnable(() =>
+        {
+            try
+            {
+                var wmg = new AndroidJavaClass("android.view.WindowManagerGlobal").CallStatic<AndroidJavaObject>("getInstance");
+                foreach (var name in wmg.Call<string[]>("getViewRootNames"))
+                {
+                    if (!name.StartsWith("DisplayXR/", StringComparison.Ordinal)) continue;
+                    var view = wmg.Call<AndroidJavaObject>("getRootView", name);
+                    var lp = view.Call<AndroidJavaObject>("getLayoutParams");
+                    const int FLAG_NOT_TOUCHABLE = 0x10;
+                    lp.Set("flags", lp.Get<int>("flags") | FLAG_NOT_TOUCHABLE);
+                    activity.Call<AndroidJavaObject>("getWindowManager").Call("updateViewLayout", view, lp);
+                    m_TouchPassThrough = true;
+                    Debug.Log($"[4DV] Touches now pass through the runtime's window ({name})");
+                }
+            }
+            catch (Exception e) { Debug.LogWarning($"[4DV] Couldn't pass touches through the runtime's window: {e.Message}"); m_TouchTries = 99; }
+        }));
+    }
+#endif
+
+    // What URP renders each eye with: the XR display subsystem's view and projection for this camera.
+    void LogXrViews()
+    {
+        var displays = new System.Collections.Generic.List<UnityEngine.XR.XRDisplaySubsystem>();
+        SubsystemManager.GetInstances(displays);
+        if (displays.Count == 0 || displays[0].GetRenderPassCount() == 0) return;
+        for (int p = 0; p < displays[0].GetRenderPassCount(); p++)
+        {
+            displays[0].GetRenderPass(p, out var pass);
+            for (int i = 0; i < pass.GetRenderParameterCount(); i++)
+            {
+                pass.GetRenderParameter(xrCamera, i, out var rp);
+                var eye = rp.view.inverse;
+                var pm = rp.projection;
+                float vfov = 2f * Mathf.Atan(1f / pm.m11) * Mathf.Rad2Deg;
+                Debug.Log($"[4DV-DBG] pass {p} view {i}: eye {eye.GetColumn(3).ToString("F2")} fwd {(-(Vector3)eye.GetColumn(2)).ToString("F2")} vfov {vfov:0.0} offaxis ({pm.m02:0.00},{pm.m12:0.00}) vp {rp.viewport}");
+            }
+        }
+    }
+
+    Transform m_XrPanel;
+
+    // The virtual screen (what the woven image shows): the XR space on Android, DisplayXR's display elsewhere.
+    public Transform ScreenTransform
+    {
+        get
+        {
+            if (xrSpace != null)
+            {
+                // The panel centre inside the XR space (the AR camera image hangs off it).
+                if (m_XrPanel == null)
+                {
+                    m_XrPanel = new GameObject("XR Panel").transform;
+                    m_XrPanel.SetParent(xrSpace, false);
+                }
+                m_XrPanel.localPosition = DisplayXRAndroidFeature.ViewRigActive ? Vector3.zero : xrPanelOrigin;
+                return m_XrPanel;
+            }
+            return display != null ? display.transform : null;
+        }
+    }
+
+    // Physical size of the woven area (metres), the viewing distance (metres) and scene units per metre at
+    // the screen.
+    public void GetViewGeometry(out float physW, out float physH, out float viewer, out float scenePerMetre)
+    {
+        PanelGeometry(out _, out physW, out physH, out viewer);
+        scenePerMetre = Mathf.Max(displayHeight, 1e-3f) / physH;
+    }
+
     public static bool ProviderActive()
     {
         try { return DisplayXRProviderDriver.IsActive; } catch { return false; }
@@ -378,11 +653,13 @@ public class FourDVOrbit : MonoBehaviour
     void PollButtons()
     {
         int b = 0;
+#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN   // DisplayXR's overlay window exists only on Windows
         if (ProviderActive())
         {
             try { DisplayXRNative.displayxr_get_overlay_pointer(out _, out _, out b); }
             catch (EntryPointNotFoundException) { }
         }
+#endif
         var m = Mouse.current;
         if (m != null)
         {
