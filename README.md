@@ -103,13 +103,20 @@ fingers pan, and a double tap resets the view. The toolbar (top right) stays on 
 | Button | Action |
 |---|---|
 | Depth − / + | 3D strength in steps of 0.25 (0 = flat, 1 = full; DisplayXR caps the eye spread at 1 on Android) |
+| Detail | Splat density: Auto (half below 20 fps, back to full above 40 fps at half), Full, ½, ¼ |
 | Fit | On: depth is capped to what the panel shows cleanly (the depth budget). Off: natural depth × strength |
-| AR | The rear camera's live image behind the clip; the clip stays put in the room as you turn the tablet. Double tap re-places it in front of you |
+| AR | Tabletop AR: the performer, cropped out of the capture stage, stands on a table or the floor seen through the rear camera (details below) |
 | Menu / Hide | The sidebar |
 
-AR tracks turning only (3 degrees of freedom, from the gyroscope), not walking around. Full 6DoF would need
-ARCore, which doesn't list these tablets, and Unity's ARCore plug-in only renders with Vulkan (which 4DV
-needs) from AR Foundation 6.1 on Unity 6.
+**AR.** A crop pass (4DV's per-clip FX hook, `Assets/Shaders/FourDVCrop.compute`) keeps a 0.7 m disc around the
+performer. The figure stands upright on a horizontal surface below the rear camera, facing the tablet, and is
+rendered through DisplayXR's camera rig at the rear camera's real field of view (from Camera2), so it lines
+up with the camera image. Until a tap it follows the centre of the view; then: tap or drag to place it, pinch
+to scale it (figurine to life size), two-finger drag up/down to raise or lower the surface until the feet sit
+on it, double tap to pick it up again. Tracking is turning only (3 degrees of freedom, from the gyroscope;
+the accelerometer if there's no gyroscope), not walking around, and surfaces aren't detected: full 6DoF would
+need ARCore, which doesn't list these tablets, and Unity's ARCore plug-in only renders with Vulkan (which
+4DV needs) from AR Foundation 6.1 on Unity 6. Face tracking keeps the front camera while AR uses the rear one.
 
 It ships five lighter clips: Dance, Cat, Kat Miche, Tim Talk and Dance 2, about 1 GB. Each eye renders at
 1920×1200 (the panel's 3D mode). If a clip can't hold 20 fps, the app draws every other splat.
@@ -210,7 +217,8 @@ release zip.
 | `Assets/Scripts/FourDVPlayer.cs` | Playlist, loop modes, seeking, speed, synced audio, per-clip framing |
 | `Assets/Scripts/FourDVOrbit.cs` | Display-centric DisplayXR rig: orbit, pan, zoom, 3D strength, 2D/3D, windowed sizing |
 | `Assets/Scripts/FourDVPanel.cs` | Sidebar UI; a DisplayXR window-space layer in 3D, a screen overlay in 2D; tablet toolbar |
-| `Assets/Scripts/FourDVAR.cs` | Android AR view: rear-camera image behind the clip, gyroscope placement |
+| `Assets/Scripts/FourDVAR.cs` | Android tabletop AR: crop, camera rig, placement on a surface, touch |
+| `Assets/Shaders/FourDVCrop.compute` | 4DV FX setup pass that keeps a cylinder around the performer (AR) |
 | `Assets/Editor/FourDVImport.cs` | Batch `.4dv` import through 4DV's own importer, plus audio and view sidecars |
 | `Assets/Editor/FourDVSetup.cs` | Headless project setup, Windows build, Android prepare and build |
 | `Tools/push-android-clips.ps1` | Installs the APK on a tablet and copies clip data to it over USB |
